@@ -1,0 +1,20 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "AgentJobObject_Test.exe",
+      "name": "AgentJobObject_Test.exe (Visual Studio Launcher)",
+      "currentDir": "${workspaceRoot}"
+    },
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "AgentJobEngine_EdgeCases_Test.exe",
+      "name": "AgentJobEngine_EdgeCases_Test.exe (Visual Studio Launcher)",
+      "currentDir": "${workspaceRoot}"
+    }
+  ]
+}
