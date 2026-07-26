@@ -91,7 +91,7 @@ nt!PspFreezeJobTree:
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Locks `JobLock` (`+0x38`) and updates `EffectiveFreezeCount` (`+0x428`) and `JobFlags.JobFrozen` (`+0x610:1`), invoking thread suspension callbacks. The kernel API expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure with `ComponentFlags = 1` (+0x00), `Freeze = 1/0` (+0x04), and `Filter = 0` (+0x05).
+**Mechanism:** Locks `JobLock` (`+0x38`) and updates `EffectiveFreezeCount` (`+0x428`) and `JobFlags.JobFrozen` (`+0x610:1`), invoking thread suspension callbacks. The kernel API expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure with `ComponentFlags = 0` (+0x00), `Freeze = 1/0` (+0x04), and `Filter = 0` (+0x05).
 
 ---
 
@@ -128,7 +128,7 @@ nt!PspSetPagePriorityLimitJobTree:
 
 ## 4. Empirical Validation Code
 
-A complete C++ PoC is provided in `[AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/AgentJobObject_Test.cpp)`:
+A complete C++ PoC is provided in `[AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobObject_Test.cpp)`:
 - Sets a **50 MB Soft Notification Limit** on a Job Object.
 - Spawns a child worker allocating 100 MB of RAM.
 - Listens on `GetQueuedCompletionStatus` for `JOB_OBJECT_MSG_NOTIFICATION_LIMIT` (`12`).
