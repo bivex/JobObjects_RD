@@ -5,7 +5,6 @@
       "name": "x64-Debug",
       "displayName": "x64 Debug",
       "description": "Target Windows x64 with MSVC Debug",
-      "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "architecture": {
         "value": "x64",
@@ -19,7 +18,6 @@
       "name": "x64-Release",
       "displayName": "x64 Release",
       "description": "Target Windows x64 with MSVC Release",
-      "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
       "architecture": {
         "value": "x64",
