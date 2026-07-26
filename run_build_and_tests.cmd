@@ -60,6 +60,19 @@ if exist "out\build\bin\AgentJobEngine_EdgeCases_Test.exe" (
 
 echo.
 echo ================================================================
+echo  RUNNING TEST 3: Agent Swarm Density & Scalability Benchmark
+echo ================================================================
+echo.
+if exist "out\build\bin\AgentSwarm_Benchmark.exe" (
+    "out\build\bin\AgentSwarm_Benchmark.exe"
+) else if exist "out\build\bin\Debug\AgentSwarm_Benchmark.exe" (
+    "out\build\bin\Debug\AgentSwarm_Benchmark.exe"
+) else (
+    echo [-] AgentSwarm_Benchmark.exe not found!
+)
+
+echo.
+echo ================================================================
 echo  All operations completed cleanly.
 echo ================================================================
 pause
