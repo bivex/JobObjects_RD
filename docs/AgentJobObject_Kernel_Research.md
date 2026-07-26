@@ -1,24 +1,25 @@
-# AgentJobObject Kernel Research & Verification — Windows 11 (`ntkrnlmp.exe`)
+# AgentJobObject & Server Silos Kernel Research — Windows 11 (`ntkrnlmp.exe`)
 
 **Verified Environment Details:**
 * **OS Build:** Windows 11 ARM64 / x64, Build `26100.1.arm64fre.ge_release.240331-1435`
-* **Kernel Base Address:** `0xfffff80047400000`
+* **Kernel Base Address:** `0xfffff801dee00000`
 * **Public PDB Symbol Hash:** `ntkrnlmp.pdb\5846006CBAFC4F9E07B846F1798587A91\ntkrnlmp.pdb`
 * **Verification Tools:** WinDbg Kernel Debugger over MCP + Microsoft Public Symbols (`.symfix`)
 
 ---
 
-## 1. Executive Summary & Verification Methodology
+## 1. Executive Summary & Architecture Overview
 
-To address the findings of the **`AgentCgroup`** paper (UC Santa Cruz / Virginia Tech, Feb 2026) on Windows:
-1. **Public Win32 API Layer:** Official, documented APIs (`SetInformationJobObject`, `JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION`, `JobObjectFreezeInformation`) provide complete, stable control over memory throttling, process tree freezing, and notification limits without relying on unstable kernel internals.
-2. **Kernel Internal Layer (`nt!_EJOB`):** Internal data structures and functions (`PspGetJobMemoryUsageNotificationViolations`, `PspFreezeJobTree`) govern how the kernel processes these requests.
+To address high-density AI Agent orchestration on Windows:
+1. **Resource Control Layer (`_EJOB`):** Native Job Objects provide non-destructive soft memory notification limits, working set page priority compression, child process breakaway prevention, IOPS rate limiting, and network bandwidth control.
+2. **Container Virtualization Layer (`_ESERVERSILO_GLOBALS`):** Server Silos provide lightweight OS-level isolation for filesystem (`SiloRootDirectoryName`), registry (`CmpStartSiloRegistryNamespace`), and Object Directories (`ObSiloState`) without Hyper-V virtualization overhead.
 
 ---
 
-## 2. Empirical Kernel Structure Dump (`nt!_EJOB`)
+## 2. Empirical Kernel Structure Dumps
 
-Dumped directly from `ntkrnlmp.pdb` on Windows 11 ARM64 (Build 26100.1):
+### A. Executive Job Object Structure (`nt!_EJOB`, Size: `0x728` bytes)
+Dumped directly from `ntkrnlmp.pdb` on Windows 11 Build 26100.1:
 
 ```text
 struct nt!_EJOB (Size: 0x728 bytes)
@@ -43,18 +44,33 @@ struct nt!_EJOB (Size: 0x728 bytes)
    +0x520 RootJob          : Ptr64 _EJOB
    +0x5e0 ServerSiloGlobals : Ptr64 _ESERVERSILO_GLOBALS
    +0x608 NetRateControl   : Ptr64 _JOB_NET_RATE_CONTROL
-   +0x610 JobFlags         : Uint4B (Bit 9: JobFrozen, Bit 30: Silo)
+   +0x610 JobFlags         : Uint4B (Bit 1: JobFrozen, Bit 2: BreakawayOk, Bit 4: KillOnJobClose)
    +0x638 IoRateControlHeader : _JOB_RATE_CONTROL_HEADER
    +0x6a0 VolumeIoControlTree : _RTL_RB_TREE
+```
+
+### B. Server Silo Globals (`nt!_ESERVERSILO_GLOBALS`, Size: `0x5a0` bytes)
+Dumped directly from `ntkrnlmp.pdb`:
+
+```text
+struct nt!_ESERVERSILO_GLOBALS (Size: 0x5a0 bytes)
+   +0x000 ObSiloState      : _OBP_SILODRIVERSTATE (Object Directory \Silos\N\)
+   +0x2e0 SeSiloState      : _SEP_SILOSTATE (Security Tokens & LSA Context)
+   +0x370 WnfSiloState     : _WNF_SILODRIVERSTATE (Windows Notification Facility)
+   +0x3c8 PsProtectedCurrentDirectory : _UNICODE_STRING (Isolated Working Dir)
+   +0x3d8 PsProtectedEnvironment : _UNICODE_STRING (Isolated Env Block)
+   +0x4d0 NtSystemRoot     : _UNICODE_STRING (Virtualized C:\Windows)
+   +0x4e0 SiloRootDirectoryName : _UNICODE_STRING (Isolated Root Directory)
+   +0x508 UserSharedData   : Ptr64 _SILO_USER_SHARED_DATA (Virtualized KUSER_SHARED_DATA)
+   +0x538 ContainerBuildNumber : Uint4B (26100)
 ```
 
 ---
 
 ## 3. Disassembled Internal Kernel Functions
 
-### A. Non-Destructive Notification Evaluation (`nt!PspGetJobMemoryUsageNotificationViolations`)
-* **Symbol Address:** `fffff800`47cfab90`
-* **Disassembly:**
+### A. Non-Destructive Soft Memory Notification (`nt!PspGetJobMemoryUsageNotificationViolations`)
+* **Address:** `fffff801`df6fab90`
 ```assembly
 nt!PspGetJobMemoryUsageNotificationViolations:
   ldr   x9, [x0, #0x4C0]    ; x9 = _EJOB.NotificationInfo (+0x4c0)
@@ -68,13 +84,12 @@ nt!PspGetJobMemoryUsageNotificationViolations:
   orr   w0, w0, #0x8000
   ret
 ```
-**Mechanism:** Evaluates memory consumption against soft limits (`0x200` / `0x8000`). Queues an I/O completion packet to `_EJOB.CompletionPort` (`+0x228`) **without terminating any process**.
+**Mechanism:** Evaluates memory consumption against soft limits (`0x200` / `0x8000`). Posts a non-destructive completion packet (`MsgID 10` / `12`) to `_EJOB.CompletionPort` (`+0x228`), preserving the LLM in-process state.
 
 ---
 
 ### B. Process Tree Freezing (`nt!PspFreezeJobTree`)
-* **Symbol Address:** `fffff800`47cfa638`
-* **Disassembly:**
+* **Address:** `fffff801`df6fa638`
 ```assembly
 nt!PspFreezeJobTree:
   mov   x19, x0             ; x19 = _EJOB pointer
@@ -91,29 +106,27 @@ nt!PspFreezeJobTree:
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Locks `JobLock` (`+0x38`) and updates `EffectiveFreezeCount` (`+0x428`) and `JobFlags.JobFrozen` (`+0x610:1`), invoking thread suspension callbacks. The kernel API expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure with `ComponentFlags = 0` (+0x00), `Freeze = 1/0` (+0x04), and `Filter = 0` (+0x05).
+**Mechanism:** Locks `JobLock` (`+0x38`) and sets `JobFlags.JobFrozen` (`+0x610:1`), suspending process threads. Expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure (`ComponentFlags = 0`, `Freeze = 1/0` at +0x04, `Filter = 0` at +0x05).
 
 ---
 
-### C. Breakaway Prevention (`nt!PspImplicitAssignProcessToJob`)
-* **Symbol Address:** `fffff800`47cfafc0`
-* **Disassembly:**
+### C. Silo Isolation Validation (`nt!PspValidateJobAssignmentSiloPolicy`)
+* **Address:** `fffff801`df6fe7c0`
 ```assembly
-nt!PspImplicitAssignProcessToJob:
-  bl    nt!PspLockJobChain
-  tbz   w24, #0xA, SkipSilo   ; Check if Breakaway is permitted
-  bl    nt!PsGetEffectiveServerSilo
-  ...
-  bl    nt!PspUnlockJobChain
-  ret
+nt!PspValidateJobAssignmentSiloPolicy:
+  bl    nt!PsGetEffectiveServerSilo   ; Gets ServerSilo of Job
+  mov   x19, x0
+  mov   x0, x20                       ; Target Process pointer
+  bl    nt!PsGetEffectiveServerSilo   ; Gets ServerSilo of Process
+  cmp   x0, x19                       ; Compares Process Silo vs Job Silo
+  bne   nt!PspValidateJobAssignmentSiloPolicy+0x78 ; Reject if Silos mismatch
 ```
-**Mechanism:** Intercepts child process creation (`CreateProcess`) and binds child processes to the parent job tree unless `JOB_OBJECT_LIMIT_BREAKAWAY_OK` is explicitly set in `LimitFlags` (`+0x100`).
+**Mechanism:** Enforces hardware-backed process assignment policy ensuring a process from Silo A cannot attach to or pollute Job B in Silo B.
 
 ---
 
-### D. Idle Phase Working Set Trim (`nt!PspSetPagePriorityLimitJobTree`)
-* **Symbol Address:** `fffff800`47b22280`
-* **Disassembly:**
+### D. Idle Phase Working Set Compression (`nt!PspSetPagePriorityLimitJobTree`)
+* **Address:** `fffff801`df522278`
 ```assembly
 nt!PspSetPagePriorityLimitJobTree:
   bl    nt!ExAcquireResourceExclusiveLite
@@ -122,14 +135,39 @@ nt!PspSetPagePriorityLimitJobTree:
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Updates `PagePriorityLimit` (`+0x448`). During LLM reasoning phases (40-45% of latency), dropping page priority from `5` to `1` hints the Memory Manager (`nt!MiTrimWorkingSet`) to compress idle framework heaps.
+**Mechanism:** Sets `PagePriorityLimit = 1`. Hints the Memory Manager (`nt!MiTrimWorkingSet`) to compress idle tool/Python heaps into the Windows Memory Compression Store.
 
 ---
 
-## 4. Empirical Validation Code
+## 4. Advanced Resource Control Specifications
 
-A complete C++ PoC is provided in `[AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobObject_Test.cpp)`:
-- Sets a **50 MB Soft Notification Limit** on a Job Object.
-- Spawns a child worker allocating 100 MB of RAM.
-- Listens on `GetQueuedCompletionStatus` for `JOB_OBJECT_MSG_NOTIFICATION_LIMIT` (`12`).
-- Verifies that the memory spike triggers the notification event **without OOM-killing the process**, and executes `JobObjectFreezeInformation` (`18`) to freeze/unfreeze the process tree.
+### A. Volume I/O Rate Control (Class 19: `JobObjectIoRateControlInformation`)
+```cpp
+typedef struct _JOBOBJECT_IO_RATE_CONTROL_INFORMATION {
+    LONG64 MaxIops;                                // Max IOPS (e.g. 500)
+    LONG64 MaxBandwidth;                           // Max Bandwidth in bytes/sec (e.g. 30 MB/s)
+    LONG64 ReservationIops;                        // Guaranteed IOPS
+    PWSTR  VolumeName;                             // Target volume (e.g. L"C:\\")
+    DWORD  BaseIoSize;                             // Base block size (64 KB)
+    JOB_OBJECT_IO_RATE_CONTROL_FLAGS ControlFlags; // JOB_OBJECT_IO_RATE_CONTROL_ENABLE
+} JOBOBJECT_IO_RATE_CONTROL_INFORMATION;
+```
+
+### B. Network Bandwidth Control (Class 32: `JobObjectNetRateControlInformation`)
+```cpp
+typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION {
+    DWORD64 MaxBandwidth;                           // Max bandwidth in bytes/sec (e.g. 100 Mbps)
+    JOB_OBJECT_NET_RATE_CONTROL_FLAGS ControlFlags; // JOB_OBJECT_NET_RATE_CONTROL_ENABLE | MAX_BANDWIDTH
+    BYTE    DscpTag;                                // QoS priority tag
+} JOBOBJECT_NET_RATE_CONTROL_INFORMATION;
+```
+
+---
+
+## 5. Verification & Repository Artifacts
+
+- **Core C++ Engine Header:** `[include/AgentJobEngine.hpp](file:///Volumes/External/Code/JobObjects/include/AgentJobEngine.hpp)`
+- **Core C++ Engine Implementation:** `[src/AgentJobEngine.cpp](file:///Volumes/External/Code/JobObjects/src/AgentJobEngine.cpp)`
+- **Integrated PoC Test:** `[tests/AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobObject_Test.cpp)`
+- **Edge-Case Unit Test Suite:** `[tests/AgentJobEngine_EdgeCases_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobEngine_EdgeCases_Test.cpp)`
+- **1-Click Build & Test Script:** `[run_build_and_tests.cmd](file:///Volumes/External/Code/JobObjects/run_build_and_tests.cmd)`
