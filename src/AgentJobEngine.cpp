@@ -79,7 +79,7 @@ namespace AgentEngine {
     }
 
     bool AgentSession::AssignProcess(HANDLE hProcess) {
-        if (!m_hRootJob || !hProcess) return false;
+        if (!m_hRootJob || !hProcess || hProcess == INVALID_HANDLE_VALUE) return false;
         return AssignProcessToJobObject(m_hRootJob, hProcess) != FALSE;
     }
 
@@ -115,14 +115,18 @@ namespace AgentEngine {
     bool AgentSession::FreezeJobTree() {
         if (!m_hRootJob) return false;
         JOBOBJECT_FREEZE_INFORMATION_ENGINE freeze = { 0 };
+        freeze.ComponentFlags = 0;
         freeze.Freeze = TRUE;
+
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freeze, sizeof(freeze)) != FALSE;
     }
 
     bool AgentSession::ThawJobTree() {
         if (!m_hRootJob) return false;
         JOBOBJECT_FREEZE_INFORMATION_ENGINE freeze = { 0 };
+        freeze.ComponentFlags = 0;
         freeze.Freeze = FALSE;
+
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freeze, sizeof(freeze)) != FALSE;
     }
 
