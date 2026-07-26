@@ -8,6 +8,30 @@
 
 namespace AgentEngine {
 
+    static bool EnablePrivilege(LPCWSTR lpszPrivilege) {
+        HANDLE hToken;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+            return false;
+        }
+
+        TOKEN_PRIVILEGES tp = { 0 };
+        LUID luid;
+
+        if (!LookupPrivilegeValueW(NULL, lpszPrivilege, &luid)) {
+            CloseHandle(hToken);
+            return false;
+        }
+
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+        BOOL bRes = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), NULL, NULL);
+        DWORD dwErr = GetLastError();
+        CloseHandle(hToken);
+        return bRes && (dwErr == ERROR_SUCCESS);
+    }
+
     AgentSession::AgentSession(const AgentSessionConfig& config)
         : m_config(config),
           m_hRootJob(NULL),
@@ -35,6 +59,10 @@ namespace AgentEngine {
     }
 
     bool AgentSession::Initialize() {
+        // Enable privileges for Freeze/Thaw and Priority Adjustments
+        EnablePrivilege(L"SeDebugPrivilege");
+        EnablePrivilege(L"SeIncreaseBasePriorityPrivilege");
+
         // 1. Create Completion Port
         m_hCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
         if (!m_hCompletionPort) return false;
@@ -114,20 +142,42 @@ namespace AgentEngine {
 
     bool AgentSession::FreezeJobTree() {
         if (!m_hRootJob) return false;
-        JOBOBJECT_FREEZE_INFORMATION_ENGINE freeze = { 0 };
-        freeze.ComponentFlags = 0;
-        freeze.Freeze = TRUE;
 
-        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freeze, sizeof(freeze)) != FALSE;
+        // Probe 1-8 byte payloads for JobObjectFreezeInformation
+        BYTE payload[8] = { 0 };
+        payload[0] = 1; // Freeze = TRUE (at offset 0)
+
+        for (DWORD sz = 1; sz <= 8; sz++) {
+            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload, sz)) {
+                return true;
+            }
+        }
+        
+        // Also probe with Freeze = TRUE at offset 4 (ComponentFlags at 0, Freeze at 4)
+        BYTE payload2[8] = { 0 };
+        payload2[4] = 1;
+
+        for (DWORD sz = 5; sz <= 8; sz++) {
+            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload2, sz)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     bool AgentSession::ThawJobTree() {
         if (!m_hRootJob) return false;
-        JOBOBJECT_FREEZE_INFORMATION_ENGINE freeze = { 0 };
-        freeze.ComponentFlags = 0;
-        freeze.Freeze = FALSE;
 
-        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freeze, sizeof(freeze)) != FALSE;
+        BYTE payload[8] = { 0 };
+        payload[0] = 0; // Freeze = FALSE
+
+        for (DWORD sz = 1; sz <= 8; sz++) {
+            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload, sz)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void AgentSession::MonitorLoop() {
