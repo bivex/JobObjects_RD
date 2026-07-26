@@ -6,7 +6,7 @@
 #ifndef AGENT_JOB_ENGINE_HPP
 #define AGENT_JOB_ENGINE_HPP
 
-#include <Windows.h>
+#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
