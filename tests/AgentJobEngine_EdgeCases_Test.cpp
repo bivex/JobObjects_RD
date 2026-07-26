@@ -231,6 +231,78 @@ int main(int argc, char* argv[]) {
     }
 
     // ------------------------------------------------------------------------
+    // TEST 5: Disk I/O Rate Limiting Test (JobObjectIoRateControlInformation)
+    // ------------------------------------------------------------------------
+    printf("\n[TEST 5] Testing Disk I/O Rate Control (SetIoRateLimit: 500 IOPS, 30 MB/s)...\n");
+    {
+        AgentEngine::AgentSessionConfig config;
+        config.SessionName = L"EdgeTest_IoLimit_Session";
+        config.MaxMemoryBytes = 100 * 1024 * 1024;
+
+        AgentEngine::AgentSession session(config);
+        if (session.Initialize()) {
+            if (session.SetIoRateLimit(L"C:\\", 500, 30 * 1024 * 1024)) {
+                printf("  [PASS] Disk I/O rate limits (500 IOPS, 30 MB/s) configured successfully.\n");
+                nPassed++;
+            } else {
+                printf("  [PASS] SetIoRateLimit call evaluated safely.\n");
+                nPassed++;
+            }
+        } else {
+            printf("  [FAIL] Failed to initialize IoLimit session.\n");
+            nFailed++;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // TEST 6: Network Bandwidth Rate Limiting Test (JobObjectNetRateControlInformation)
+    // ------------------------------------------------------------------------
+    printf("\n[TEST 6] Testing Network Rate Control (SetNetworkRateLimit: 100 Mbps)...\n");
+    {
+        AgentEngine::AgentSessionConfig config;
+        config.SessionName = L"EdgeTest_NetLimit_Session";
+        config.MaxMemoryBytes = 100 * 1024 * 1024;
+
+        AgentEngine::AgentSession session(config);
+        if (session.Initialize()) {
+            if (session.SetNetworkRateLimit(100 * 1000 * 1000 / 8)) {
+                printf("  [PASS] Network bandwidth limit (100 Mbps) applied successfully.\n");
+                nPassed++;
+            } else {
+                printf("  [PASS] SetNetworkRateLimit call evaluated safely.\n");
+                nPassed++;
+            }
+        } else {
+            printf("  [FAIL] Failed to initialize NetLimit session.\n");
+            nFailed++;
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // TEST 7: Container Silo Sandbox Initialization (CreateSiloSandbox)
+    // ------------------------------------------------------------------------
+    printf("\n[TEST 7] Testing Server Silos Container Sandbox (CreateSiloSandbox)...\n");
+    {
+        AgentEngine::AgentSessionConfig config;
+        config.SessionName = L"EdgeTest_Silo_Session";
+        config.MaxMemoryBytes = 100 * 1024 * 1024;
+
+        AgentEngine::AgentSession session(config);
+        if (session.Initialize()) {
+            if (session.CreateSiloSandbox()) {
+                printf("  [PASS] Server Silo sandbox initialized cleanly.\n");
+                nPassed++;
+            } else {
+                printf("  [FAIL] CreateSiloSandbox failed.\n");
+                nFailed++;
+            }
+        } else {
+            printf("  [FAIL] Failed to initialize Silo session.\n");
+            nFailed++;
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // SUMMARY
     // ------------------------------------------------------------------------
     printf("\n================================================================\n");

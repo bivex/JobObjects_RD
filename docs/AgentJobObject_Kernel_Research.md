@@ -106,7 +106,7 @@ nt!PspFreezeJobTree:
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Locks `JobLock` (`+0x38`) and sets `JobFlags.JobFrozen` (`+0x610:1`), suspending process threads. Expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure (`ComponentFlags = 0`, `Freeze = 1/0` at +0x04, `Filter = 0` at +0x05).
+**Mechanism:** Locks `JobLock` (`+0x38`) and sets `JobFlags.JobFrozen` (`+0x610:1`), suspending process threads. Expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure (`ComponentFlags = 1`, `Freeze = 1/0` at +0x04, `Filter = 0` at +0x05).
 
 ---
 
@@ -166,8 +166,8 @@ typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION {
 
 ## 5. Verification & Repository Artifacts
 
-- **Core C++ Engine Header:** `[include/AgentJobEngine.hpp](file:///Volumes/External/Code/JobObjects/include/AgentJobEngine.hpp)`
-- **Core C++ Engine Implementation:** `[src/AgentJobEngine.cpp](file:///Volumes/External/Code/JobObjects/src/AgentJobEngine.cpp)`
-- **Integrated PoC Test:** `[tests/AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobObject_Test.cpp)`
-- **Edge-Case Unit Test Suite:** `[tests/AgentJobEngine_EdgeCases_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobEngine_EdgeCases_Test.cpp)`
-- **1-Click Build & Test Script:** `[run_build_and_tests.cmd](file:///Volumes/External/Code/JobObjects/run_build_and_tests.cmd)`
+- **Core C++ Engine Header:** `[include/AgentJobEngine.hpp](file:///Y:/Code/JobObjects/include/AgentJobEngine.hpp)`
+- **Core C++ Engine Implementation:** `[src/AgentJobEngine.cpp](file:///Y:/Code/JobObjects/src/AgentJobEngine.cpp)`
+- **Integrated PoC Test:** `[tests/AgentJobObject_Test.cpp](file:///Y:/Code/JobObjects/tests/AgentJobObject_Test.cpp)`
+- **Edge-Case Unit Test Suite:** `[tests/AgentJobEngine_EdgeCases_Test.cpp](file:///Y:/Code/JobObjects/tests/AgentJobEngine_EdgeCases_Test.cpp)`
+- **1-Click Build & Test Script:** `[run_build_and_tests.cmd](file:///Y:/Code/JobObjects/run_build_and_tests.cmd)`

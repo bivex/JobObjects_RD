@@ -23,6 +23,14 @@
 #define JobObjectPagePriorityLimitId 14
 #endif
 
+#ifndef JobObjectIoRateControlInformation
+#define JobObjectIoRateControlInformation 19
+#endif
+
+#ifndef JobObjectNetRateControlInformation
+#define JobObjectNetRateControlInformation 32
+#endif
+
 #ifndef JOB_OBJECT_MSG_NOTIFICATION_LIMIT
 #define JOB_OBJECT_MSG_NOTIFICATION_LIMIT 12
 #endif
@@ -38,6 +46,33 @@ typedef struct _JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE {
     DWORD Enable;
     DWORD PagePriority;
 } JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE;
+
+typedef enum _JOB_OBJECT_IO_RATE_CONTROL_FLAGS_ENGINE {
+    JOB_OBJECT_IO_RATE_CONTROL_ENABLE_ENGINE = 0x1,
+    JOB_OBJECT_IO_RATE_CONTROL_STANDALONE_VOLUME_ENGINE = 0x2,
+    JOB_OBJECT_IO_RATE_CONTROL_FORCE_UNIT_ACCESS_ENGINE = 0x4
+} JOB_OBJECT_IO_RATE_CONTROL_FLAGS_ENGINE;
+
+typedef struct _JOBOBJECT_IO_RATE_CONTROL_INFORMATION_ENGINE {
+    LONG64 MaxIops;
+    LONG64 MaxBandwidth;
+    LONG64 ReservationIops;
+    PWSTR  VolumeName;
+    DWORD  BaseIoSize;
+    DWORD  ControlFlags;
+} JOBOBJECT_IO_RATE_CONTROL_INFORMATION_ENGINE;
+
+typedef enum _JOB_OBJECT_NET_RATE_CONTROL_FLAGS_ENGINE {
+    JOB_OBJECT_NET_RATE_CONTROL_ENABLE_ENGINE = 0x1,
+    JOB_OBJECT_NET_RATE_CONTROL_MAX_BANDWIDTH_ENGINE = 0x2,
+    JOB_OBJECT_NET_RATE_CONTROL_DSCP_TAG_ENGINE = 0x4
+} JOB_OBJECT_NET_RATE_CONTROL_FLAGS_ENGINE;
+
+typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE {
+    DWORD64 MaxBandwidth;
+    DWORD   ControlFlags;
+    BYTE    DscpTag;
+} JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE;
 
 namespace AgentEngine {
 
@@ -70,6 +105,13 @@ namespace AgentEngine {
         // Control Execution State (Freeze / Thaw)
         bool FreezeJobTree();
         bool ThawJobTree();
+
+        // Resource Control: Disk I/O & Network Rate Limiting
+        bool SetIoRateLimit(const std::wstring& volumeName, DWORD64 maxIops, DWORD64 maxBandwidthBytesPerSec);
+        bool SetNetworkRateLimit(DWORD64 maxBandwidthBytesPerSec);
+
+        // Container Sandbox: Server Silos (HKLM Registry & Object Namespace Isolation)
+        bool CreateSiloSandbox();
 
         // Register Feedback Handler
         void SetFeedbackCallback(ResourceFeedbackCallback callback) { m_feedbackCallback = callback; }

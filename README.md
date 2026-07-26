@@ -1,11 +1,14 @@
 # AgentJobEngine — High-Density AI Agent OS Resource Controller (Windows Kernel)
 
-**AgentJobEngine** is a high-performance C++ engine for multi-tenant AI coding agents (Claude Code, SWE-agent, OpenHands) running on Windows. Based on OS resource management principles from the *AgentCgroup* research (UC Santa Cruz / Virginia Tech, Feb 2026), it leverages native Windows Kernel **Job Objects (`_EJOB`)**, **Memory Compression**, **Process Tree Freezing**, and **Silos**.
+**AgentJobEngine** is a high-performance C++ engine for multi-tenant AI coding agents (Claude Code, SWE-agent, OpenHands) running on Windows. Based on OS resource management principles from the *AgentCgroup* research (UC Santa Cruz / Virginia Tech, Feb 2026), it leverages native Windows Kernel **Job Objects (`_EJOB`)**, **Memory Compression**, **Process Tree Freezing**, **Disk/Net Rate Limits**, and **Silos**.
 
 ---
 
 ## Key Features & Kernel Capabilities
 - **10× – 15× Swarm Concurrency:** Increases concurrent AI agent density from 32 to 500+ agents on a 128 GB RAM server.
+- **Disk I/O Rate Control (`SetIoRateLimit`):** Limits volume IOPS & throughput (e.g. 500 IOPS / 30 MB/s via `JobObjectIoRateControlInformation`, class 19) preventing NVMe exhaustion during `npm install` or `git clone`.
+- **Network Bandwidth Control (`SetNetworkRateLimit`):** Restricts per-agent network throughput (e.g. 100 Mbps via `JobObjectNetRateControlInformation`, class 32).
+- **Server Silos Container Sandbox (`CreateSiloSandbox`):** Provides registry HKLM and object directory `\Silos\N\` isolation via Silo container virtualization.
 - **Idle Memory Compression (`TrimWorkingSetToCompressStore`):** Uses `nt!PspSetPagePriorityLimitJobTree` (`JobObjectPagePriorityLimitId` = 14) to compress idle Node.js/Python framework heaps from **185 MB down to < 15 MB** during LLM reasoning phases (40–45% of task time).
 - **Process Tree Freeze & Thaw (`FreezeJobTree` / `ThawJobTree`):** Synchronizes process suspension across complex agent worker trees via `JobObjectFreezeInformation` (class 18, `ComponentFlags = 1`, `Freeze = 1/0`) backed by kernel function `nt!PspFreezeJobTree`.
 - **Non-Destructive Memory Limits (Zero OOM Kills):** Intercepts memory spikes via `CompletionPort` (`JOB_OBJECT_MSG_JOB_MEMORY_LIMIT`). Processes do NOT crash or lose LLM context; they degrade gracefully.
@@ -21,12 +24,12 @@ JobObjects/
 ├── README.md                      # Index Documentation
 ├── run_build_and_tests.cmd        # 1-Click Automated Build and Test Execution Script
 ├── include/
-│   └── AgentJobEngine.hpp         # C++ Core Engine Header
+│   └── AgentJobEngine.hpp         # C++ Core Engine Header (Freeze, I/O, Net, Silos API)
 ├── src/
 │   └── AgentJobEngine.cpp         # C++ Core Engine Implementation
 ├── tests/
 │   ├── AgentJobObject_Test.cpp    # Integrated Validation Test (50MB Cap + LLM Feedback)
-│   └── AgentJobEngine_EdgeCases_Test.cpp # Defensive Edge Cases & Freeze/Thaw Unit Tests
+│   └── AgentJobEngine_EdgeCases_Test.cpp # 7 Defensive Unit Tests (Breakaway, Freeze/Thaw, IO, Net, Silos)
 └── docs/
     ├── AgentJobObject_Kernel_Research.md  # Verified WinDbg Kernel Offsets & Disassembly (Build 26100.1)
     ├── JobObjects_Internals_Win11.md     # Windows _EJOB vs Linux cgroups v2 Architecture
@@ -38,7 +41,7 @@ JobObjects/
 ## Building & Testing
 
 ### Option A: 1-Click Script (Recommended)
-Run the automated build and full test suite runner:
+Run the automated build and full 7-test suite runner:
 ```cmd
 .\run_build_and_tests.cmd
 ```

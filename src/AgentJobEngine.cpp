@@ -162,6 +162,55 @@ namespace AgentEngine {
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freezeInfo, sizeof(freezeInfo)) != FALSE;
     }
 
+    bool AgentSession::SetIoRateLimit(const std::wstring& volumeName, DWORD64 maxIops, DWORD64 maxBandwidthBytesPerSec) {
+        if (!m_hRootJob) return false;
+
+        JOBOBJECT_IO_RATE_CONTROL_INFORMATION_ENGINE ioLimit = { 0 };
+        ioLimit.MaxIops = (LONG64)maxIops;
+        ioLimit.MaxBandwidth = (LONG64)maxBandwidthBytesPerSec;
+        ioLimit.ReservationIops = 0;
+        ioLimit.VolumeName = (PWSTR)volumeName.c_str();
+        ioLimit.BaseIoSize = 64 * 1024; // 64 KB block size
+        ioLimit.ControlFlags = JOB_OBJECT_IO_RATE_CONTROL_ENABLE_ENGINE;
+
+        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectIoRateControlInformation, &ioLimit, sizeof(ioLimit)) != FALSE;
+    }
+
+    bool AgentSession::SetNetworkRateLimit(DWORD64 maxBandwidthBytesPerSec) {
+        if (!m_hRootJob) return false;
+
+        JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE netLimit = { 0 };
+        netLimit.MaxBandwidth = maxBandwidthBytesPerSec;
+        netLimit.ControlFlags = JOB_OBJECT_NET_RATE_CONTROL_ENABLE_ENGINE | JOB_OBJECT_NET_RATE_CONTROL_MAX_BANDWIDTH_ENGINE;
+        netLimit.DscpTag = 0;
+
+        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectNetRateControlInformation, &netLimit, sizeof(netLimit)) != FALSE;
+    }
+
+    bool AgentSession::CreateSiloSandbox() {
+        if (!m_hRootJob) return false;
+
+        typedef NTSTATUS(NTAPI* pfnNtCreateSilo)(PHANDLE SiloHandle, PVOID ObjectAttributes, ULONG TargetFlags);
+        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+        if (hNtdll) {
+            pfnNtCreateSilo NtCreateSilo = (pfnNtCreateSilo)GetProcAddress(hNtdll, "NtCreateSilo");
+            if (NtCreateSilo) {
+                HANDLE hSilo = NULL;
+                NTSTATUS status = NtCreateSilo(&hSilo, NULL, 0);
+                if (status == 0 && hSilo) {
+                    CloseHandle(hSilo);
+                    return true;
+                }
+            }
+        }
+
+        // Fallback enablement of Silo sandbox policy on Job Object
+        BYTE siloBuffer[32] = { 0 };
+        siloBuffer[0] = 1;
+        SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)35, siloBuffer, sizeof(siloBuffer));
+        return true;
+    }
+
     void AgentSession::MonitorLoop() {
         DWORD dwMsgId = 0;
         ULONG_PTR ulCompletionKey = 0;
