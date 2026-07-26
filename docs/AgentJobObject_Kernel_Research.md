@@ -81,13 +81,17 @@ nt!PspFreezeJobTree:
   add   x0, x19, #0x38      ; x0 = &_EJOB.JobLock (+0x38)
   bl    nt!ExAcquireResourceExclusiveLite
   ...
-  ; Traverses ChildJobListHead (+0x508) and ProcessListHead (+0x028)
-  ; Updates EffectiveFreezeCount (+0x428) and executes PspExecuteJobFreezeThawCallback
+  ldrb  w8, [x20, #4]       ; Reads Freeze flag (1 byte) at offset +0x04
+  add   x10, x24, #0x610    ; Address of _EJOB.JobFlags (+0x610)
+  mov   w9, #2
+  cbnz  w8, nt!PspFreezeJobTree+0x228 ; If Freeze != 0 -> set JobFrozen bit (+0x610)
+
+  ldrb  w8, [x20, #5]       ; Reads Filter flag (1 byte) at offset +0x05
   ...
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Locks `JobLock` (`+0x38`) and increments `EffectiveFreezeCount` (`+0x428`), invoking thread suspension callbacks. This is the exact kernel implementation of `JobObjectFreezeInformation`.
+**Mechanism:** Locks `JobLock` (`+0x38`) and updates `EffectiveFreezeCount` (`+0x428`) and `JobFlags.JobFrozen` (`+0x610:1`), invoking thread suspension callbacks. The kernel API expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure with `ComponentFlags = 1` (+0x00), `Freeze = 1/0` (+0x04), and `Filter = 0` (+0x05).
 
 ---
 
