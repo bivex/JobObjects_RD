@@ -1,6 +1,7 @@
 // ============================================================================
-// AgentJobObject Empirical Validation PoC
-// Fully Integrated with AgentEngine C++ Library
+// AgentJobObject Integrated Validation PoC
+// Demonstrates Non-Destructive Memory Throttling, Working Set Compression,
+// and Intent-Driven LLM Feedback for AI Agent Sandboxing on Windows 10 / 11
 // ============================================================================
 
 #include "AgentJobEngine.hpp"
