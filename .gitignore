@@ -1,0 +1,19 @@
+# Build output
+out/
+build/
+.vs/
+bin/
+obj/
+
+# Executables & Symbols
+*.exe
+*.obj
+*.pdb
+*.lib
+*.ilk
+*.suo
+*.user
+
+# Temporary files
+*.tmp
+*.log
