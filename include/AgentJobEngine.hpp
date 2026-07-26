@@ -28,8 +28,10 @@
 #endif
 
 typedef struct _JOBOBJECT_FREEZE_INFORMATION_ENGINE {
-    ULONG ComponentFlags;
-    BOOLEAN Freeze;
+    ULONG ComponentFlags; // +0x00: 1 = JOB_OBJECT_FREEZE_OPTION_FREEZE
+    BOOLEAN Freeze;       // +0x04: TRUE = Freeze, FALSE = Thaw
+    BOOLEAN Filter;       // +0x05: 0
+    UCHAR Reserved[10];   // +0x06: 16 bytes total size
 } JOBOBJECT_FREEZE_INFORMATION_ENGINE;
 
 typedef struct _JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE {

@@ -143,41 +143,23 @@ namespace AgentEngine {
     bool AgentSession::FreezeJobTree() {
         if (!m_hRootJob) return false;
 
-        // Probe 1-8 byte payloads for JobObjectFreezeInformation
-        BYTE payload[8] = { 0 };
-        payload[0] = 1; // Freeze = TRUE (at offset 0)
+        JOBOBJECT_FREEZE_INFORMATION_ENGINE freezeInfo = { 0 };
+        freezeInfo.ComponentFlags = 1;
+        freezeInfo.Freeze = TRUE;
+        freezeInfo.Filter = FALSE;
 
-        for (DWORD sz = 1; sz <= 8; sz++) {
-            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload, sz)) {
-                return true;
-            }
-        }
-        
-        // Also probe with Freeze = TRUE at offset 4 (ComponentFlags at 0, Freeze at 4)
-        BYTE payload2[8] = { 0 };
-        payload2[4] = 1;
-
-        for (DWORD sz = 5; sz <= 8; sz++) {
-            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload2, sz)) {
-                return true;
-            }
-        }
-
-        return false;
+        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freezeInfo, sizeof(freezeInfo)) != FALSE;
     }
 
     bool AgentSession::ThawJobTree() {
         if (!m_hRootJob) return false;
 
-        BYTE payload[8] = { 0 };
-        payload[0] = 0; // Freeze = FALSE
+        JOBOBJECT_FREEZE_INFORMATION_ENGINE freezeInfo = { 0 };
+        freezeInfo.ComponentFlags = 1;
+        freezeInfo.Freeze = FALSE;
+        freezeInfo.Filter = FALSE;
 
-        for (DWORD sz = 1; sz <= 8; sz++) {
-            if (SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, payload, sz)) {
-                return true;
-            }
-        }
-        return false;
+        return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectFreezeInformation, &freezeInfo, sizeof(freezeInfo)) != FALSE;
     }
 
     void AgentSession::MonitorLoop() {

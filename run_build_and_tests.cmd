@@ -10,6 +10,7 @@ echo.
 
 rem 1. Terminate stale background MSBuild processes
 taskkill /F /IM MSBuild.exe /IM cl.exe 2>nul
+ping -n 2 127.0.0.1 >nul
 
 rem 2. Configure CMake project if needed
 if not exist "out\build" (
