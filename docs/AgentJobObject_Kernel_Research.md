@@ -13,6 +13,7 @@
 To address high-density AI Agent orchestration on Windows:
 1. **Resource Control Layer (`_EJOB`):** Native Job Objects provide non-destructive soft memory notification limits, working set page priority compression, child process breakaway prevention, IOPS rate limiting, and network bandwidth control.
 2. **Container Virtualization Layer (`_ESERVERSILO_GLOBALS`):** Server Silos provide lightweight OS-level isolation for filesystem (`SiloRootDirectoryName`), registry (`CmpStartSiloRegistryNamespace`), and Object Directories (`ObSiloState`) without Hyper-V virtualization overhead.
+3. **Memory Safety & Lifetime Guarantee (`_OBJECT_HEADER`):** Hardware-backed reference counting and modern Segment Heap prevent Use-After-Free (UAF) memory corruption during rapid allocation and deallocation cycles.
 
 ---
 
@@ -67,7 +68,30 @@ struct nt!_ESERVERSILO_GLOBALS (Size: 0x5a0 bytes)
 
 ---
 
-## 3. Disassembled Internal Kernel Functions
+## 3. Kernel Memory Safety & UAF Mitigation Mechanics
+
+### A. Object Reference Counting (`nt!_OBJECT_HEADER`)
+Every Job Object and process handle managed by `AgentJobEngine` is protected by `_OBJECT_HEADER` reference counting:
+
+```text
+struct nt!_OBJECT_HEADER
+   +0x000 PointerCount     : Int8B   (Kernel internal reference count)
+   +0x008 HandleCount      : Int8B   (User-mode handle count)
+   +0x010 Lock             : _EX_PUSH_LOCK
+   +0x018 TypeIndex        : UChar   (Object Type ID: Job, Process, Section)
+```
+
+* **Lifetime Enforcement:** When a tool process or child Job Object closes its handle (`CloseHandle`), `HandleCount` drops, but `PointerCount` retains active kernel references until `ObDereferenceObject` is called.
+* **UAF Prevention:** Memory is only released to the Kernel Pool (`ExFreePoolWithTag`) when `PointerCount == 0`, ensuring dangling handles cannot trigger Use-After-Free crashes during rapid agent process recycling.
+
+### B. Segment Heap & ARM64 Hardware Security
+* **Kernel Segment Heap (`nt!ExAllocatePool2`):** Windows 11 replaces legacy lookaside lists with Segment Heap allocation, preventing immediate chunk re-allocation and mitigating UAF heap-spray exploitation vectors.
+* **ARM64 Pointer Authentication Code (PAC):** Cryptographically signs function pointers in object vtables (`BLRAA` / `AUTIA`), generating hardware traps on corrupted or dangling function calls.
+* **Memory Tagging Extension (MTE / ARMv8.5+):** 4-bit memory tagging detects mismatched pointer tags instantly upon invalid memory access.
+
+---
+
+## 4. Disassembled Internal Kernel Functions
 
 ### A. Non-Destructive Soft Memory Notification (`nt!PspGetJobMemoryUsageNotificationViolations`)
 * **Address:** `fffff801`df6fab90`
@@ -106,7 +130,7 @@ nt!PspFreezeJobTree:
   bl    nt!ExReleaseResourceLite
   ret
 ```
-**Mechanism:** Locks `JobLock` (`+0x38`) and sets `JobFlags.JobFrozen` (`+0x610:1`), suspending process threads. Expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure (`ComponentFlags = 1`, `Freeze = 1/0` at +0x04, `Filter = 0` at +0x05).
+**Mechanism:** Locks `JobLock` (`+0x38`) and sets `JobFlags.JobFrozen` (`+0x610:1`), suspending process threads. Expects a 16-byte `JOBOBJECT_FREEZE_INFORMATION` structure (`ComponentFlags = 0`, `Freeze = 1/0` at +0x04, `Filter = 0` at +0x05).
 
 ---
 
@@ -139,7 +163,7 @@ nt!PspSetPagePriorityLimitJobTree:
 
 ---
 
-## 4. Advanced Resource Control Specifications
+## 5. Advanced Resource Control Specifications
 
 ### A. Volume I/O Rate Control (Class 19: `JobObjectIoRateControlInformation`)
 ```cpp
@@ -164,10 +188,10 @@ typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION {
 
 ---
 
-## 5. Verification & Repository Artifacts
+## 6. Verification & Repository Artifacts
 
-- **Core C++ Engine Header:** `[include/AgentJobEngine.hpp](file:///Y:/Code/JobObjects/include/AgentJobEngine.hpp)`
-- **Core C++ Engine Implementation:** `[src/AgentJobEngine.cpp](file:///Y:/Code/JobObjects/src/AgentJobEngine.cpp)`
-- **Integrated PoC Test:** `[tests/AgentJobObject_Test.cpp](file:///Y:/Code/JobObjects/tests/AgentJobObject_Test.cpp)`
-- **Edge-Case Unit Test Suite:** `[tests/AgentJobEngine_EdgeCases_Test.cpp](file:///Y:/Code/JobObjects/tests/AgentJobEngine_EdgeCases_Test.cpp)`
-- **1-Click Build & Test Script:** `[run_build_and_tests.cmd](file:///Y:/Code/JobObjects/run_build_and_tests.cmd)`
+- **Core C++ Engine Header:** `[include/AgentJobEngine.hpp](file:///Volumes/External/Code/JobObjects/include/AgentJobEngine.hpp)`
+- **Core C++ Engine Implementation:** `[src/AgentJobEngine.cpp](file:///Volumes/External/Code/JobObjects/src/AgentJobEngine.cpp)`
+- **Integrated PoC Test:** `[tests/AgentJobObject_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobObject_Test.cpp)`
+- **Edge-Case Unit Test Suite:** `[tests/AgentJobEngine_EdgeCases_Test.cpp](file:///Volumes/External/Code/JobObjects/tests/AgentJobEngine_EdgeCases_Test.cpp)`
+- **1-Click Build & Test Script:** `[run_build_and_tests.cmd](file:///Volumes/External/Code/JobObjects/run_build_and_tests.cmd)`
