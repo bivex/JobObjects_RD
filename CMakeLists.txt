@@ -27,6 +27,10 @@ endif()
 add_library(AgentJobEngine STATIC src/AgentJobEngine.cpp include/AgentJobEngine.hpp)
 target_include_directories(AgentJobEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# AgentJobEngine Shared C Library (for Python / Ctypes / MCP integration)
+add_library(AgentJobEngineC SHARED src/AgentJobEngine.cpp src/AgentJobEngine_C_API.cpp include/AgentJobEngine.hpp include/AgentJobEngine_C_API.h)
+target_include_directories(AgentJobEngineC PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 # Integrated Validation PoC Executable
 add_executable(AgentJobObject_Test tests/AgentJobObject_Test.cpp)
 
@@ -38,6 +42,7 @@ add_executable(AgentSwarm_Benchmark tests/AgentSwarm_Benchmark.cpp)
 
 if(WIN32)
     target_link_libraries(AgentJobEngine PUBLIC kernel32 user32 advapi32 psapi)
+    target_link_libraries(AgentJobEngineC PUBLIC kernel32 user32 advapi32 psapi)
     target_link_libraries(AgentJobObject_Test PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
     target_link_libraries(AgentJobEngine_EdgeCases_Test PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
     target_link_libraries(AgentSwarm_Benchmark PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
@@ -48,4 +53,5 @@ else()
 endif()
 
 # Installation rules
-install(TARGETS AgentJobEngine AgentJobObject_Test AgentJobEngine_EdgeCases_Test AgentSwarm_Benchmark DESTINATION bin)
+install(TARGETS AgentJobEngine AgentJobEngineC AgentJobObject_Test AgentJobEngine_EdgeCases_Test AgentSwarm_Benchmark DESTINATION bin)
+
