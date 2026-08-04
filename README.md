@@ -1,17 +1,17 @@
-# AgentJobEngine — High-Density AI Agent OS Resource Controller (Windows Kernel)
+# AgentJobEngine — High-Density AI Agent OS Resource Controller (macOS & Windows)
 
-**AgentJobEngine** is a high-performance C++ engine for multi-tenant AI coding agents (Claude Code, SWE-agent, OpenHands) running on Windows. Based on OS resource management principles from the *AgentCgroup* research (UC Santa Cruz / Virginia Tech, Feb 2026), it leverages native Windows Kernel **Job Objects (`_EJOB`)**, **Memory Compression**, **Process Tree Freezing**, **Disk/Net Rate Limits**, and **Silos**.
+**AgentJobEngine** is a high-performance C++ engine for multi-tenant AI coding agents (Claude Code, SWE-agent, OpenHands) running on macOS and Windows. Based on OS resource management principles from the *AgentCgroup* research (UC Santa Cruz / Virginia Tech, Feb 2026), it leverages native **macOS Darwin Kernel & Windows Kernel (`_EJOB`)** primitives, **Memory Compression**, **Process Tree Freezing**, **Disk/Net Rate Limits**, and **Container Sandboxing**.
 
 ---
 
 ## Key Features & Kernel Capabilities
 - **10× – 15× Swarm Concurrency:** Increases concurrent AI agent density from 32 to 500+ agents on a 128 GB RAM server.
-- **Disk I/O Rate Control (`SetIoRateLimit`):** Limits volume IOPS & throughput (e.g. 500 IOPS / 30 MB/s via `JobObjectIoRateControlInformation`, class 19) preventing NVMe exhaustion during `npm install` or `git clone`.
+- **Disk I/O Rate Control (`SetIoRateLimit`):** Limits volume IOPS & throughput via macOS `setiopolicy_np` / Windows `JobObjectIoRateControlInformation` (class 19) preventing NVMe exhaustion during `npm install` or `git clone`.
 - **Network Bandwidth Control (`SetNetworkRateLimit`):** Restricts per-agent network throughput (e.g. 100 Mbps via `JobObjectNetRateControlInformation`, class 32).
-- **Server Silos Container Sandbox (`CreateSiloSandbox`):** Provides registry HKLM and object directory `\Silos\N\` isolation via Silo container virtualization.
-- **Idle Memory Compression (`TrimWorkingSetToCompressStore`):** Uses `nt!PspSetPagePriorityLimitJobTree` (`JobObjectPagePriorityLimitId` = 14) to compress idle Node.js/Python framework heaps from **185 MB down to < 15 MB** during LLM reasoning phases (40–45% of task time).
-- **Process Tree Freeze & Thaw (`FreezeJobTree` / `ThawJobTree`):** Synchronizes process suspension across complex agent worker trees via `JobObjectFreezeInformation` (class 18, `ComponentFlags = 1`, `Freeze = 1/0`) backed by kernel function `nt!PspFreezeJobTree`.
-- **Non-Destructive Memory Limits (Zero OOM Kills):** Intercepts memory spikes via `CompletionPort` (`JOB_OBJECT_MSG_JOB_MEMORY_LIMIT`). Processes do NOT crash or lose LLM context; they degrade gracefully.
+- **Container Sandbox (`CreateSiloSandbox`):** Provides process sandbox isolation via macOS Seatbelt Sandbox (`sandbox_init`) and Windows Server Silo container virtualization.
+- **Idle Memory Compression (`TrimWorkingSetToCompressStore`):** Uses Darwin QoS background policy / Windows `nt!PspSetPagePriorityLimitJobTree` (`JobObjectPagePriorityLimitId` = 14) to compress idle Node.js/Python framework heaps from **185 MB down to < 15 MB** during LLM reasoning phases (40–45% of task time).
+- **Process Tree Freeze & Thaw (`FreezeJobTree` / `ThawJobTree`):** Synchronizes process suspension across complex agent worker trees via Mach / POSIX `SIGSTOP`/`SIGCONT` signals and Windows `JobObjectFreezeInformation` (class 18, `ComponentFlags = 1`, `Freeze = 1/0`).
+- **Non-Destructive Memory Limits (Zero OOM Kills):** Intercepts memory spikes via background monitor loops and Windows `CompletionPort` (`JOB_OBJECT_MSG_JOB_MEMORY_LIMIT`). Processes do NOT crash or lose LLM context; they degrade gracefully.
 - **Intent-Driven Natural Language Feedback:** Automatically generates structured feedback messages (`[OS RESOURCE ALERT]`) for the LLM to adjust tool execution parameters dynamically.
 
 ---
@@ -22,14 +22,16 @@ JobObjects/
 ├── CMakeLists.txt                 # CMake build configuration
 ├── CMakePresets.json              # Visual Studio 2022/2026 Native Presets
 ├── README.md                      # Index Documentation
-├── run_build_and_tests.cmd        # 1-Click Automated Build and Test Execution Script
+├── run_build_and_tests.sh         # 1-Click macOS Automated Build and Test Script
+├── run_build_and_tests.cmd        # 1-Click Windows Automated Build and Test Script
 ├── include/
 │   └── AgentJobEngine.hpp         # C++ Core Engine Header (Freeze, I/O, Net, Silos API)
 ├── src/
-│   └── AgentJobEngine.cpp         # C++ Core Engine Implementation
+│   └── AgentJobEngine.cpp         # C++ Core Engine Implementation (macOS & Windows)
 ├── tests/
 │   ├── AgentJobObject_Test.cpp    # Integrated Validation Test (50MB Cap + LLM Feedback)
-│   └── AgentJobEngine_EdgeCases_Test.cpp # 7 Defensive Unit Tests (Breakaway, Freeze/Thaw, IO, Net, Silos)
+│   ├── AgentJobEngine_EdgeCases_Test.cpp # 7 Defensive Unit Tests (Breakaway, Freeze/Thaw, IO, Net, Silos)
+│   └── AgentSwarm_Benchmark.cpp   # Empirical Swarm Density & Concurrency Benchmark
 └── docs/
     ├── AgentJobObject_Kernel_Research.md  # Verified WinDbg Kernel Offsets & Disassembly (Build 26100.1)
     ├── JobObjects_Internals_Win11.md     # Windows _EJOB vs Linux cgroups v2 Architecture
@@ -40,22 +42,29 @@ JobObjects/
 
 ## Building & Testing
 
-### Option A: 1-Click Script (Recommended)
-Run the automated build and full 7-test suite runner:
+### macOS (1-Click Script - Recommended)
+```bash
+./run_build_and_tests.sh
+```
+
+### macOS (Manual CMake Build)
+```bash
+cmake -B out/build -DCMAKE_BUILD_TYPE=Debug
+cmake --build out/build
+./out/build/bin/AgentJobObject_Test
+./out/build/bin/AgentJobEngine_EdgeCases_Test
+```
+
+### Windows (1-Click Script)
 ```cmd
 .\run_build_and_tests.cmd
 ```
 
-### Option B: Command Line (CMake + MSVC)
+### Windows (Command Line - CMake + MSVC)
 ```cmd
-cd Y:\Code\JobObjects
 cmake -B out/build -A x64
 cmake --build out/build --config Debug
 .\out\build\bin\AgentJobObject_Test.exe
 .\out\build\bin\AgentJobEngine_EdgeCases_Test.exe
 ```
 
-### Option C: Visual Studio 2022 / 2026
-1. Open the `Y:\Code\JobObjects` folder in Visual Studio.
-2. Select **`AgentJobObject_Test.exe`** or **`AgentJobEngine_EdgeCases_Test.exe`** as the startup item.
-3. Press **F5** or **Ctrl + F5** to run.

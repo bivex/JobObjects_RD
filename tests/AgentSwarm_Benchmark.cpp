@@ -1,41 +1,82 @@
 // ============================================================================
 // AgentSwarm_Benchmark — Empirical Swarm Concurrency & Density Test
 // Measures agent creation overhead, memory compression ratio, and max density
+// (macOS & Windows)
 // ============================================================================
 
 #include "AgentJobEngine.hpp"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <vector>
 #include <chrono>
+#include <thread>
+
+#ifdef _WIN32
 #include <psapi.h>
+#else
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/sysctl.h>
+#include <mach-o/dyld.h>
+#include <libproc.h>
+#endif
 
 #define TARGET_SWARM_COUNT 50
 
 void WorkerChildProcess() {
     // Simulate active agent framework heap allocation (50 MB)
+#ifdef _WIN32
     char* p = (char*)VirtualAlloc(NULL, 50 * 1024 * 1024, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+    char* p = (char*)mmap(NULL, 50 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (p == MAP_FAILED) p = NULL;
+#endif
     if (p) {
         for (size_t i = 0; i < 50 * 1024 * 1024; i += 4096) p[i] = 1;
-        Sleep(6000);
+        std::this_thread::sleep_for(std::chrono::milliseconds(6000));
+#ifdef _WIN32
         VirtualFree(p, 0, MEM_RELEASE);
+#else
+        munmap(p, 50 * 1024 * 1024);
+#endif
     }
 }
 
-static DWORD64 GetSystemAvailableMemoryMB() {
+static uint64_t GetSystemAvailableMemoryMB() {
+#ifdef _WIN32
     MEMORYSTATUSEX stat = { sizeof(stat) };
     if (GlobalMemoryStatusEx(&stat)) {
         return stat.ullAvailPhys / (1024 * 1024);
     }
     return 0;
+#else
+    uint64_t memsize = 0;
+    size_t len = sizeof(memsize);
+    if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) == 0) {
+        return memsize / (1024 * 1024);
+    }
+    return 0;
+#endif
 }
 
-static DWORD64 GetProcessWorkingSetMB(HANDLE hProcess) {
+static uint64_t GetProcessWorkingSetMB(HANDLE hProcess) {
+#ifdef _WIN32
     PROCESS_MEMORY_COUNTERS_EX pmc = { sizeof(pmc) };
     if (GetProcessMemoryInfo(hProcess, (PPROCESS_MEMORY_COUNTERS)&pmc, sizeof(pmc))) {
         return pmc.WorkingSetSize / (1024 * 1024);
     }
     return 0;
+#else
+    pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(hProcess));
+    struct proc_taskinfo info;
+    int st = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info));
+    if (st == sizeof(info)) {
+        return info.pti_resident_size / (1024 * 1024);
+    }
+    return 0;
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -48,18 +89,27 @@ int main(int argc, char* argv[]) {
     printf(" AgentJobEngine -- Agent Swarm Concurrency & Density Benchmark\n");
     printf("================================================================\n\n");
 
-    DWORD64 initialMemoryMB = GetSystemAvailableMemoryMB();
-    printf("[*] Baseline System Available RAM: %llu MB\n", initialMemoryMB);
+    uint64_t initialMemoryMB = GetSystemAvailableMemoryMB();
+    printf("[*] Baseline System RAM: %llu MB\n", initialMemoryMB);
     printf("[*] Spawning Swarm Benchmark of %d Agent Sessions...\n\n", TARGET_SWARM_COUNT);
 
     char szSelfPath[MAX_PATH];
+#ifdef _WIN32
     GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
+#else
+    uint32_t size = sizeof(szSelfPath);
+    if (_NSGetExecutablePath(szSelfPath, &size) != 0) {
+        strncpy(szSelfPath, argv[0], MAX_PATH);
+    }
+#endif
 
     struct SwarmNode {
         std::unique_ptr<AgentEngine::AgentSession> Session;
         HANDLE hProcess;
+#ifdef _WIN32
         HANDLE hThread;
-        DWORD dwPid;
+#endif
+        uint32_t dwPid;
     };
 
     std::vector<SwarmNode> swarm;
@@ -78,6 +128,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+#ifdef _WIN32
         char szCmdLine[MAX_PATH * 2];
         sprintf_s(szCmdLine, sizeof(szCmdLine), "\"%s\" --swarm-worker", szSelfPath);
 
@@ -97,6 +148,24 @@ int main(int argc, char* argv[]) {
             swarm.push_back(std::move(node));
             nSuccessCount++;
         }
+#else
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl(szSelfPath, szSelfPath, "--swarm-worker", (char*)NULL);
+            exit(1);
+        } else if (pid > 0) {
+            HANDLE hProc = reinterpret_cast<HANDLE>(static_cast<intptr_t>(pid));
+            session->AssignProcess(hProc);
+
+            SwarmNode node;
+            node.Session = std::move(session);
+            node.hProcess = hProc;
+            node.dwPid = static_cast<uint32_t>(pid);
+
+            swarm.push_back(std::move(node));
+            nSuccessCount++;
+        }
+#endif
     }
 
     auto endClock = std::chrono::high_resolution_clock::now();
@@ -105,10 +174,10 @@ int main(int argc, char* argv[]) {
     printf("[+] Successfully spawned & bound %d / %d Agent Sessions in %.2f ms (%.2f ms/agent).\n",
            nSuccessCount, TARGET_SWARM_COUNT, spawnDurationMs, spawnDurationMs / nSuccessCount);
 
-    Sleep(1500); // Allow heap commit
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500)); // Allow heap commit
 
     // Measure Uncompressed Memory
-    DWORD64 totalUncompressedWorkingSetMB = 0;
+    uint64_t totalUncompressedWorkingSetMB = 0;
     for (auto& node : swarm) {
         totalUncompressedWorkingSetMB += GetProcessWorkingSetMB(node.hProcess);
     }
@@ -122,10 +191,10 @@ int main(int argc, char* argv[]) {
         node.Session->TrimWorkingSetToCompressStore();
     }
 
-    Sleep(1000); // Allow kernel memory manager worker thread to trim
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Allow memory manager worker thread to trim
 
     // Measure Compressed Memory
-    DWORD64 totalCompressedWorkingSetMB = 0;
+    uint64_t totalCompressedWorkingSetMB = 0;
     for (auto& node : swarm) {
         totalCompressedWorkingSetMB += GetProcessWorkingSetMB(node.hProcess);
     }
@@ -137,8 +206,8 @@ int main(int argc, char* argv[]) {
     printf("[+] Measured Memory Compression Factor: %.2fx Reduction\n", compressionRatio);
 
     // Calculate Max Theoretical Density on 128 GB Server
-    DWORD64 maxDensityUnconstrained = (128ULL * 1024) / 4000; // 4 GB per standard agent
-    DWORD64 maxDensityManaged = (128ULL * 1024) / (DWORD64)(avgCompressedMB > 0 ? avgCompressedMB + 15 : 25);
+    uint64_t maxDensityUnconstrained = (128ULL * 1024) / 4000; // 4 GB per standard agent
+    uint64_t maxDensityManaged = (128ULL * 1024) / (uint64_t)(avgCompressedMB > 0 ? avgCompressedMB + 15 : 25);
 
     printf("\n================================================================\n");
     printf(" AGENT SWARM SCALABILITY & DENSITY RESULTS\n");
@@ -157,10 +226,17 @@ int main(int argc, char* argv[]) {
 
     // Clean up swarm
     for (auto& node : swarm) {
+#ifdef _WIN32
         WaitForSingleObject(node.hProcess, 3000);
         CloseHandle(node.hProcess);
         CloseHandle(node.hThread);
+#else
+        pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(node.hProcess));
+        int status = 0;
+        waitpid(pid, &status, 0);
+#endif
     }
 
     return 0;
 }
+

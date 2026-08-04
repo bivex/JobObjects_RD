@@ -1,20 +1,65 @@
 // ============================================================================
 // AgentJobEngine — High-Performance OS Resource Engine for AI Coding Agents
-// Native Windows Kernel Architecture (_EJOB / Silos / Working Set Compression)
+// macOS Darwin Kernel & Native Windows Kernel Architecture
 // ============================================================================
 
 #ifndef AGENT_JOB_ENGINE_HPP
 #define AGENT_JOB_ENGINE_HPP
 
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <memory>
 #include <functional>
+#include <thread>
+#include <atomic>
 
-// Custom struct definitions for undocumented / extended Job APIs
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
+#include <sys/stat.h>
+#include <sys/mount.h>
+#include <signal.h>
+#include <pthread.h>
+#include <mach/mach.h>
+#include <mach/task.h>
+#include <sandbox.h>
+#include <libproc.h>
+#include <sys/mman.h>
+
+#ifndef HANDLE
+typedef void* HANDLE;
+#endif
+#ifndef DWORD
+typedef uint32_t DWORD;
+#endif
+#ifndef DWORD64
+typedef uint64_t DWORD64;
+#endif
+#ifndef LONG64
+typedef int64_t LONG64;
+#endif
+#ifndef PWSTR
+typedef wchar_t* PWSTR;
+#endif
+#ifndef LPCWSTR
+typedef const wchar_t* LPCWSTR;
+#endif
+#ifndef MAX_PATH
+#define MAX_PATH 1024
+#endif
+#ifndef INVALID_HANDLE_VALUE
+#define INVALID_HANDLE_VALUE ((HANDLE)(intptr_t)-1)
+#endif
+#endif
+
+// Custom struct definitions for extended Job APIs
 #ifndef JobObjectFreezeInformation
 #define JobObjectFreezeInformation 18
 #endif
@@ -36,15 +81,15 @@
 #endif
 
 typedef struct _JOBOBJECT_FREEZE_INFORMATION_ENGINE {
-    ULONG ComponentFlags; // +0x00: 1 = JOB_OBJECT_FREEZE_OPTION_FREEZE
-    BOOLEAN Freeze;       // +0x04: TRUE = Freeze, FALSE = Thaw
-    BOOLEAN Filter;       // +0x05: 0
-    UCHAR Reserved[10];   // +0x06: 16 bytes total size
+    uint32_t ComponentFlags; // +0x00: 1 = JOB_OBJECT_FREEZE_OPTION_FREEZE
+    uint8_t  Freeze;         // +0x04: TRUE = Freeze, FALSE = Thaw
+    uint8_t  Filter;         // +0x05: 0
+    uint8_t  Reserved[10];   // +0x06: 16 bytes total size
 } JOBOBJECT_FREEZE_INFORMATION_ENGINE;
 
 typedef struct _JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE {
-    DWORD Enable;
-    DWORD PagePriority;
+    uint32_t Enable;
+    uint32_t PagePriority;
 } JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE;
 
 typedef enum _JOB_OBJECT_IO_RATE_CONTROL_FLAGS_ENGINE {
@@ -54,12 +99,12 @@ typedef enum _JOB_OBJECT_IO_RATE_CONTROL_FLAGS_ENGINE {
 } JOB_OBJECT_IO_RATE_CONTROL_FLAGS_ENGINE;
 
 typedef struct _JOBOBJECT_IO_RATE_CONTROL_INFORMATION_ENGINE {
-    LONG64 MaxIops;
-    LONG64 MaxBandwidth;
-    LONG64 ReservationIops;
-    PWSTR  VolumeName;
-    DWORD  BaseIoSize;
-    DWORD  ControlFlags;
+    int64_t MaxIops;
+    int64_t MaxBandwidth;
+    int64_t ReservationIops;
+    PWSTR   VolumeName;
+    uint32_t BaseIoSize;
+    uint32_t ControlFlags;
 } JOBOBJECT_IO_RATE_CONTROL_INFORMATION_ENGINE;
 
 typedef enum _JOB_OBJECT_NET_RATE_CONTROL_FLAGS_ENGINE {
@@ -69,9 +114,9 @@ typedef enum _JOB_OBJECT_NET_RATE_CONTROL_FLAGS_ENGINE {
 } JOB_OBJECT_NET_RATE_CONTROL_FLAGS_ENGINE;
 
 typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE {
-    DWORD64 MaxBandwidth;
-    DWORD   ControlFlags;
-    BYTE    DscpTag;
+    uint64_t MaxBandwidth;
+    uint32_t ControlFlags;
+    uint8_t  DscpTag;
 } JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE;
 
 namespace AgentEngine {
@@ -82,9 +127,9 @@ namespace AgentEngine {
     // Config options for an Agent Session
     struct AgentSessionConfig {
         std::wstring SessionName;
-        DWORD64 MaxMemoryBytes;       // Hard / Soft Memory Cap
-        DWORD CpuRateCap;             // CPU Hard Cap percentage (1-100)
-        DWORD ActiveProcessLimit;     // Max child processes
+        uint64_t MaxMemoryBytes;       // Hard / Soft Memory Cap
+        uint32_t CpuRateCap;             // CPU Hard Cap percentage (1-100)
+        uint32_t ActiveProcessLimit;     // Max child processes
         bool EnableAutoTrimOnIdle;    // Compress working set during LLM reasoning
     };
 
@@ -97,7 +142,7 @@ namespace AgentEngine {
         bool AssignProcess(HANDLE hProcess);
         
         // Tool Call Lifecycle (Nested Job management)
-        HANDLE CreateToolChildJob(const std::wstring& toolName, DWORD64 toolMemoryCapBytes);
+        HANDLE CreateToolChildJob(const std::wstring& toolName, uint64_t toolMemoryCapBytes);
         
         // Memory Optimization: Compress Working Set to Memory Compression Store
         bool TrimWorkingSetToCompressStore();
@@ -107,10 +152,10 @@ namespace AgentEngine {
         bool ThawJobTree();
 
         // Resource Control: Disk I/O & Network Rate Limiting
-        bool SetIoRateLimit(const std::wstring& volumeName, DWORD64 maxIops, DWORD64 maxBandwidthBytesPerSec);
-        bool SetNetworkRateLimit(DWORD64 maxBandwidthBytesPerSec);
+        bool SetIoRateLimit(const std::wstring& volumeName, uint64_t maxIops, uint64_t maxBandwidthBytesPerSec);
+        bool SetNetworkRateLimit(uint64_t maxBandwidthBytesPerSec);
 
-        // Container Sandbox: Server Silos (HKLM Registry & Object Namespace Isolation)
+        // Container Sandbox: Server Silos / macOS Sandbox
         bool CreateSiloSandbox();
 
         // Register Feedback Handler
@@ -123,8 +168,12 @@ namespace AgentEngine {
         HANDLE m_hRootJob;
         HANDLE m_hCompletionPort;
         HANDLE m_hMonitorThread;
-        bool m_bRunning;
+        std::atomic<bool> m_bRunning;
         ResourceFeedbackCallback m_feedbackCallback;
+#ifndef _WIN32
+        std::vector<pid_t> m_assignedPids;
+        std::thread m_posixMonitorThread;
+#endif
     };
 
 } // namespace AgentEngine

@@ -20,7 +20,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/lib)
 if(MSVC)
     add_compile_options(/W4 /EHsc)
 else()
-    add_compile_options(-Wall -Wextra)
+    add_compile_options(-Wall -Wextra -Wno-deprecated-declarations -Wno-unused-private-field)
 endif()
 
 # AgentJobEngine Static Library
@@ -41,6 +41,10 @@ if(WIN32)
     target_link_libraries(AgentJobObject_Test PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
     target_link_libraries(AgentJobEngine_EdgeCases_Test PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
     target_link_libraries(AgentSwarm_Benchmark PRIVATE AgentJobEngine kernel32 user32 advapi32 psapi)
+else()
+    target_link_libraries(AgentJobObject_Test PRIVATE AgentJobEngine)
+    target_link_libraries(AgentJobEngine_EdgeCases_Test PRIVATE AgentJobEngine)
+    target_link_libraries(AgentSwarm_Benchmark PRIVATE AgentJobEngine)
 endif()
 
 # Installation rules

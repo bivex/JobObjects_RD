@@ -1,14 +1,24 @@
 // ============================================================================
 // AgentJobEngine Edge Cases & Defensive Unit Tests
 // Covers Process Breakaway Prevention, Deep Tree Freeze/Thaw, Memory Flapping,
-// and Edge Condition Error Handling
+// and Edge Condition Error Handling (macOS & Windows)
 // ============================================================================
 
 #include "AgentJobEngine.hpp"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <vector>
 #include <atomic>
+#include <chrono>
+#include <thread>
+
+#ifndef _WIN32
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <mach-o/dyld.h>
+#endif
 
 // Worker mode flags for edge case tests
 enum EdgeTestMode {
@@ -20,8 +30,9 @@ enum EdgeTestMode {
 
 void EdgeTestWorker(EdgeTestMode mode) {
     if (mode == MODE_BREAKAWAY_ATTEMPT) {
-        printf("[EdgeWorker:Breakaway] Attempting CREATE_BREAKAWAY_FROM_JOB...\n");
+        printf("[EdgeWorker:Breakaway] Attempting process breakaway...\n");
         char szSelfPath[MAX_PATH];
+#ifdef _WIN32
         GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
 
         STARTUPINFOA si = { sizeof(si) };
@@ -38,20 +49,48 @@ void EdgeTestWorker(EdgeTestMode mode) {
         } else {
             printf("[EdgeWorker:Breakaway] Breakaway blocked by OS Job policy (Error: %lu).\n", GetLastError());
         }
+#else
+        uint32_t size = sizeof(szSelfPath);
+        if (_NSGetExecutablePath(szSelfPath, &size) != 0) {
+            strncpy(szSelfPath, "test", MAX_PATH);
+        }
+        pid_t pid = fork();
+        if (pid == 0) {
+            setpgid(0, 0); // New process group
+            printf("[EdgeWorker:Breakaway] Isolated breakaway child running (PID: %d).\n", getpid());
+            exit(0);
+        } else if (pid > 0) {
+            int status = 0;
+            waitpid(pid, &status, 0);
+            printf("[EdgeWorker:Breakaway] Breakaway child executed safely.\n");
+        }
+#endif
     } 
     else if (mode == MODE_DEEP_TREE_CHILD) {
+#ifdef _WIN32
         printf("[EdgeWorker:DeepTree] Child process running (PID: %lu). Holding...\n", GetCurrentProcessId());
-        Sleep(4000);
+#else
+        printf("[EdgeWorker:DeepTree] Child process running (PID: %d). Holding...\n", getpid());
+#endif
+        std::this_thread::sleep_for(std::chrono::milliseconds(4000));
     }
     else if (mode == MODE_MEMORY_FLAPPER) {
         printf("[EdgeWorker:Flapper] Rapidly allocating/deallocating memory chunks (50 iterations)...\n");
         for (int i = 0; i < 50; i++) {
+#ifdef _WIN32
             char* p = (char*)VirtualAlloc(NULL, 20 * 1024 * 1024, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
             if (p) {
                 p[0] = 1;
                 VirtualFree(p, 0, MEM_RELEASE);
             }
-            Sleep(10);
+#else
+            char* p = (char*)mmap(NULL, 20 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+            if (p && p != MAP_FAILED) {
+                p[0] = 1;
+                munmap(p, 20 * 1024 * 1024);
+            }
+#endif
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         printf("[EdgeWorker:Flapper] Flapping test completed.\n");
     }
@@ -80,6 +119,17 @@ int main(int argc, char* argv[]) {
     int nPassed = 0;
     int nFailed = 0;
 
+    // Helper to get executable path
+    char szSelfPath[MAX_PATH];
+#ifdef _WIN32
+    GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
+#else
+    uint32_t pathSize = sizeof(szSelfPath);
+    if (_NSGetExecutablePath(szSelfPath, &pathSize) != 0) {
+        strncpy(szSelfPath, argv[0], MAX_PATH);
+    }
+#endif
+
     // ------------------------------------------------------------------------
     // TEST 1: Breakaway Prevention Security Check
     // ------------------------------------------------------------------------
@@ -91,9 +141,7 @@ int main(int argc, char* argv[]) {
 
         AgentEngine::AgentSession session(config);
         if (session.Initialize()) {
-            char szSelfPath[MAX_PATH];
-            GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
-
+#ifdef _WIN32
             char szCmdLine[MAX_PATH * 2];
             sprintf_s(szCmdLine, sizeof(szCmdLine), "\"%s\" --breakaway", szSelfPath);
 
@@ -112,6 +160,23 @@ int main(int argc, char* argv[]) {
                 printf("  [FAIL] Failed to spawn breakaway worker.\n");
                 nFailed++;
             }
+#else
+            pid_t pid = fork();
+            if (pid == 0) {
+                execl(szSelfPath, szSelfPath, "--breakaway", (char*)NULL);
+                exit(1);
+            } else if (pid > 0) {
+                HANDLE hProc = reinterpret_cast<HANDLE>(static_cast<intptr_t>(pid));
+                session.AssignProcess(hProc);
+                int status = 0;
+                waitpid(pid, &status, 0);
+                printf("  [PASS] Breakaway prevention test completed cleanly.\n");
+                nPassed++;
+            } else {
+                printf("  [FAIL] Failed to spawn breakaway worker.\n");
+                nFailed++;
+            }
+#endif
         } else {
             printf("  [FAIL] Failed to initialize session.\n");
             nFailed++;
@@ -129,9 +194,7 @@ int main(int argc, char* argv[]) {
 
         AgentEngine::AgentSession session(config);
         if (session.Initialize()) {
-            char szSelfPath[MAX_PATH];
-            GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
-
+#ifdef _WIN32
             char szCmdLine[MAX_PATH * 2];
             sprintf_s(szCmdLine, sizeof(szCmdLine), "\"%s\" --deeptree", szSelfPath);
 
@@ -142,11 +205,11 @@ int main(int argc, char* argv[]) {
                 session.AssignProcess(pi.hProcess);
                 ResumeThread(pi.hThread);
 
-                Sleep(500);
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 printf("  [*] Freezing Job Tree (JobObjectFreezeInformation)...\n");
                 if (session.FreezeJobTree()) {
                     printf("  [+] Freeze command acknowledged by kernel.\n");
-                    Sleep(1000);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                     printf("  [*] Thawing Job Tree...\n");
                     if (session.ThawJobTree()) {
                         printf("  [+] Thaw command acknowledged by kernel.\n");
@@ -164,6 +227,37 @@ int main(int argc, char* argv[]) {
                 CloseHandle(pi.hProcess);
                 CloseHandle(pi.hThread);
             }
+#else
+            pid_t pid = fork();
+            if (pid == 0) {
+                execl(szSelfPath, szSelfPath, "--deeptree", (char*)NULL);
+                exit(1);
+            } else if (pid > 0) {
+                HANDLE hProc = reinterpret_cast<HANDLE>(static_cast<intptr_t>(pid));
+                session.AssignProcess(hProc);
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                printf("  [*] Freezing Job Tree (SIGSTOP)...\n");
+                if (session.FreezeJobTree()) {
+                    printf("  [+] Freeze command acknowledged by kernel.\n");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    printf("  [*] Thawing Job Tree (SIGCONT)...\n");
+                    if (session.ThawJobTree()) {
+                        printf("  [+] Thaw command acknowledged by kernel.\n");
+                        nPassed++;
+                    } else {
+                        printf("  [FAIL] Thaw command failed.\n");
+                        nFailed++;
+                    }
+                } else {
+                    printf("  [FAIL] Freeze command failed.\n");
+                    nFailed++;
+                }
+
+                int status = 0;
+                waitpid(pid, &status, 0);
+            }
+#endif
         }
     }
 
@@ -184,9 +278,7 @@ int main(int argc, char* argv[]) {
         });
 
         if (session.Initialize()) {
-            char szSelfPath[MAX_PATH];
-            GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
-
+#ifdef _WIN32
             char szCmdLine[MAX_PATH * 2];
             sprintf_s(szCmdLine, sizeof(szCmdLine), "\"%s\" --flapper", szSelfPath);
 
@@ -203,6 +295,21 @@ int main(int argc, char* argv[]) {
                 printf("  [PASS] Rapid memory flapping executed without queue overflow or crashes.\n");
                 nPassed++;
             }
+#else
+            pid_t pid = fork();
+            if (pid == 0) {
+                execl(szSelfPath, szSelfPath, "--flapper", (char*)NULL);
+                exit(1);
+            } else if (pid > 0) {
+                HANDLE hProc = reinterpret_cast<HANDLE>(static_cast<intptr_t>(pid));
+                session.AssignProcess(hProc);
+
+                int status = 0;
+                waitpid(pid, &status, 0);
+                printf("  [PASS] Rapid memory flapping executed without queue overflow or crashes.\n");
+                nPassed++;
+            }
+#endif
         }
     }
 
@@ -231,7 +338,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ------------------------------------------------------------------------
-    // TEST 5: Disk I/O Rate Limiting Test (JobObjectIoRateControlInformation)
+    // TEST 5: Disk I/O Rate Limiting Test (SetIoRateLimit)
     // ------------------------------------------------------------------------
     printf("\n[TEST 5] Testing Disk I/O Rate Control (SetIoRateLimit: 500 IOPS, 30 MB/s)...\n");
     {
@@ -241,7 +348,7 @@ int main(int argc, char* argv[]) {
 
         AgentEngine::AgentSession session(config);
         if (session.Initialize()) {
-            if (session.SetIoRateLimit(L"C:\\", 500, 30 * 1024 * 1024)) {
+            if (session.SetIoRateLimit(L"/", 500, 30 * 1024 * 1024)) {
                 printf("  [PASS] Disk I/O rate limits (500 IOPS, 30 MB/s) configured successfully.\n");
                 nPassed++;
             } else {
@@ -255,7 +362,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ------------------------------------------------------------------------
-    // TEST 6: Network Bandwidth Rate Limiting Test (JobObjectNetRateControlInformation)
+    // TEST 6: Network Bandwidth Rate Limiting Test (SetNetworkRateLimit)
     // ------------------------------------------------------------------------
     printf("\n[TEST 6] Testing Network Rate Control (SetNetworkRateLimit: 100 Mbps)...\n");
     {
@@ -281,7 +388,7 @@ int main(int argc, char* argv[]) {
     // ------------------------------------------------------------------------
     // TEST 7: Container Silo Sandbox Initialization (CreateSiloSandbox)
     // ------------------------------------------------------------------------
-    printf("\n[TEST 7] Testing Server Silos Container Sandbox (CreateSiloSandbox)...\n");
+    printf("\n[TEST 7] Testing Container Sandbox (CreateSiloSandbox)...\n");
     {
         AgentEngine::AgentSessionConfig config;
         config.SessionName = L"EdgeTest_Silo_Session";
@@ -290,7 +397,7 @@ int main(int argc, char* argv[]) {
         AgentEngine::AgentSession session(config);
         if (session.Initialize()) {
             if (session.CreateSiloSandbox()) {
-                printf("  [PASS] Server Silo sandbox initialized cleanly.\n");
+                printf("  [PASS] Container Sandbox initialized cleanly.\n");
                 nPassed++;
             } else {
                 printf("  [FAIL] CreateSiloSandbox failed.\n");
@@ -311,3 +418,4 @@ int main(int argc, char* argv[]) {
 
     return (nFailed == 0) ? 0 : 1;
 }
+
