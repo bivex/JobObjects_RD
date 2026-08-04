@@ -126,10 +126,19 @@ int main(int argc, char* argv[]) {
     ResumeThread(pi.hThread);
     printf("[+] Tool Subprocess spawned (PID: %lu) & bound to AgentEngine Session.\n\n", pi.dwProcessId);
 #else
+#ifdef __APPLE__
     uint32_t size = sizeof(szSelfPath);
     if (_NSGetExecutablePath(szSelfPath, &size) != 0) {
         strncpy(szSelfPath, argv[0], MAX_PATH);
     }
+#else
+    ssize_t len = readlink("/proc/self/exe", szSelfPath, sizeof(szSelfPath) - 1);
+    if (len != -1) {
+        szSelfPath[len] = '\0';
+    } else {
+        strncpy(szSelfPath, argv[0], MAX_PATH);
+    }
+#endif
 
     pid_t pid = fork();
     if (pid < 0) {

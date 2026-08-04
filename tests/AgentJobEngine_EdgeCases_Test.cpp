@@ -123,9 +123,16 @@ int main(int argc, char* argv[]) {
     char szSelfPath[MAX_PATH];
 #ifdef _WIN32
     GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
-#else
+#elif defined(__APPLE__)
     uint32_t pathSize = sizeof(szSelfPath);
     if (_NSGetExecutablePath(szSelfPath, &pathSize) != 0) {
+        strncpy(szSelfPath, argv[0], MAX_PATH);
+    }
+#else
+    ssize_t len = readlink("/proc/self/exe", szSelfPath, sizeof(szSelfPath) - 1);
+    if (len != -1) {
+        szSelfPath[len] = '\0';
+    } else {
         strncpy(szSelfPath, argv[0], MAX_PATH);
     }
 #endif

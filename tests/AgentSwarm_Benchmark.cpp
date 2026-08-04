@@ -51,11 +51,18 @@ static uint64_t GetSystemAvailableMemoryMB() {
         return stat.ullAvailPhys / (1024 * 1024);
     }
     return 0;
-#else
+#elif defined(__APPLE__)
     uint64_t memsize = 0;
     size_t len = sizeof(memsize);
     if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) == 0) {
         return memsize / (1024 * 1024);
+    }
+    return 0;
+#else
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long pageSize = sysconf(_SC_PAGESIZE);
+    if (pages > 0 && pageSize > 0) {
+        return (static_cast<uint64_t>(pages) * pageSize) / (1024 * 1024);
     }
     return 0;
 #endif

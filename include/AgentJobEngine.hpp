@@ -27,11 +27,20 @@
 #include <sys/mount.h>
 #include <signal.h>
 #include <pthread.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+
+#ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <sandbox.h>
 #include <libproc.h>
-#include <sys/mman.h>
+#endif
+
+#ifdef __linux__
+#include <sys/prctl.h>
+#include <dirent.h>
+#endif
 
 #ifndef HANDLE
 typedef void* HANDLE;

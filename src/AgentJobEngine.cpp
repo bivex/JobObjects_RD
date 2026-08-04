@@ -343,19 +343,35 @@ namespace AgentEngine {
 #else
         while (m_bRunning) {
             for (pid_t pid : m_assignedPids) {
+                uint64_t residentBytes = 0;
+#ifdef __APPLE__
                 struct proc_taskinfo info;
                 int st = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info));
                 if (st == sizeof(info)) {
-                    uint64_t residentBytes = info.pti_resident_size;
-                    if (m_config.MaxMemoryBytes > 0 && residentBytes >= m_config.MaxMemoryBytes) {
-                        std::string feedback = 
-                            "[OS RESOURCE ALERT]: Memory cap reached (" + 
-                            std::to_string(m_config.MaxMemoryBytes / (1024 * 1024)) + 
-                            " MB). Reduce tool allocation or execution threads.";
+                    residentBytes = info.pti_resident_size;
+                }
+#elif defined(__linux__)
+                // Read RSS memory from /proc/[pid]/statm or /proc/[pid]/status on Linux
+                char statmPath[128];
+                snprintf(statmPath, sizeof(statmPath), "/proc/%d/statm", pid);
+                FILE* f = fopen(statmPath, "r");
+                if (f) {
+                    long sizePages = 0, rssPages = 0;
+                    if (fscanf(f, "%ld %ld", &sizePages, &rssPages) == 2) {
+                        long pageSize = sysconf(_SC_PAGESIZE);
+                        residentBytes = static_cast<uint64_t>(rssPages) * (pageSize > 0 ? pageSize : 4096);
+                    }
+                    fclose(f);
+                }
+#endif
+                if (m_config.MaxMemoryBytes > 0 && residentBytes >= m_config.MaxMemoryBytes) {
+                    std::string feedback = 
+                        "[OS RESOURCE ALERT]: Memory cap reached (" + 
+                        std::to_string(m_config.MaxMemoryBytes / (1024 * 1024)) + 
+                        " MB). Reduce tool allocation or execution threads.";
 
-                        if (m_feedbackCallback) {
-                            m_feedbackCallback(feedback);
-                        }
+                    if (m_feedbackCallback) {
+                        m_feedbackCallback(feedback);
                     }
                 }
             }
