@@ -1,6 +1,6 @@
 // ============================================================================
 // AgentJobEngine — High-Performance OS Resource Engine for AI Coding Agents
-// macOS & Windows Implementation (SPIN Formally Verified Architecture)
+// macOS & Windows Implementation (SPIN Formally Verified Architecture - High Speed)
 // ============================================================================
 
 #include "AgentJobEngine.hpp"
@@ -46,6 +46,9 @@ namespace AgentEngine {
           m_bRunning(false),
           m_isFrozen(false)
     {
+#ifndef _WIN32
+        m_assignedPids.reserve(64); // Pre-allocate vector capacity to prevent heap allocations during monitoring
+#endif
     }
 
     AgentSession::~AgentSession() {
@@ -194,7 +197,7 @@ namespace AgentEngine {
     }
 
     bool AgentSession::FreezeJobTree() {
-        if (m_isFrozen.exchange(true)) return true; // Already frozen
+        if (m_isFrozen.exchange(true)) return true; // Fast path: already frozen
 
 #ifdef _WIN32
         if (!m_hRootJob) return false;
@@ -217,7 +220,7 @@ namespace AgentEngine {
     }
 
     bool AgentSession::ThawJobTree() {
-        if (!m_isFrozen.exchange(false)) return true; // Already thawed
+        if (!m_isFrozen.exchange(false)) return true; // Fast path: already thawed
 
 #ifdef _WIN32
         if (!m_hRootJob) return false;
@@ -363,7 +366,6 @@ namespace AgentEngine {
                     dwMsgId == JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT || 
                     dwMsgId == JOB_OBJECT_MSG_NOTIFICATION_LIMIT) {
                     
-                    // Event-Driven Instant Freeze on Memory Limit Event
                     FreezeJobTree();
 
                     uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -387,40 +389,45 @@ namespace AgentEngine {
             }
         }
 #else
-        uint64_t freezeBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.FreezeThresholdPct / 100.0));
-        uint64_t thawBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.ThawThresholdPct / 100.0));
+        const uint64_t freezeBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.FreezeThresholdPct / 100.0));
+        const uint64_t thawBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.ThawThresholdPct / 100.0));
 
         while (m_bRunning) {
             uint64_t totalResidentBytes = 0;
 
-            for (pid_t pid : m_assignedPids) {
+            const size_t numPids = m_assignedPids.size();
+            for (size_t i = 0; i < numPids; ++i) {
+                pid_t pid = m_assignedPids[i];
                 uint64_t residentBytes = 0;
 #ifdef __APPLE__
                 struct proc_taskinfo info;
-                int st = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info));
-                if (st == sizeof(info)) {
+                if (proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info)) == sizeof(info)) {
                     residentBytes = info.pti_resident_size;
                 }
 #elif defined(__linux__)
-                char statmPath[128];
+                char statmPath[64];
                 snprintf(statmPath, sizeof(statmPath), "/proc/%d/statm", pid);
-                FILE* f = fopen(statmPath, "r");
-                if (f) {
-                    long sizePages = 0, rssPages = 0;
-                    if (fscanf(f, "%ld %ld", &sizePages, &rssPages) == 2) {
-                        long pageSize = sysconf(_SC_PAGESIZE);
-                        residentBytes = static_cast<uint64_t>(rssPages) * (pageSize > 0 ? pageSize : 4096);
+                int fd = open(statmPath, O_RDONLY);
+                if (fd >= 0) {
+                    char buf[64];
+                    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+                    close(fd);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        long sizePages = 0, rssPages = 0;
+                        if (sscanf(buf, "%ld %ld", &sizePages, &rssPages) == 2) {
+                            residentBytes = static_cast<uint64_t>(rssPages) * 4096;
+                        }
                     }
-                    fclose(f);
                 }
 #endif
                 totalResidentBytes += residentBytes;
             }
 
-            // SPIN-Verified Hysteresis Control Logic
+            // Zero-allocation Hysteresis Evaluation
             if (m_config.MaxMemoryBytes > 0) {
-                if (!m_isFrozen.load() && totalResidentBytes >= freezeBytes) {
-                    // Instant Freeze at 80% RAM threshold
+                const bool currentlyFrozen = m_isFrozen.load(std::memory_order_relaxed);
+                if (!currentlyFrozen && totalResidentBytes >= freezeBytes) {
                     FreezeJobTree();
 
                     uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -439,14 +446,13 @@ namespace AgentEngine {
                     if (m_feedbackCallback) {
                         m_feedbackCallback(aopMsg.NaturalLanguagePrompt);
                     }
-                } else if (m_isFrozen.load() && totalResidentBytes <= thawBytes) {
-                    // Hysteresis Thaw at 60% RAM threshold
+                } else if (currentlyFrozen && totalResidentBytes <= thawBytes) {
                     ThawJobTree();
                 }
             }
 
-            // Dynamic Adaptive Sleep: 10ms when near memory limit, 150ms when idle
-            int sleepMs = (m_isFrozen.load() || (m_config.MaxMemoryBytes > 0 && totalResidentBytes >= thawBytes)) ? 10 : 150;
+            // Adaptive Sleep Tuning
+            int sleepMs = (m_isFrozen.load(std::memory_order_relaxed) || (m_config.MaxMemoryBytes > 0 && totalResidentBytes >= thawBytes)) ? 5 : 100;
             std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         }
 #endif
