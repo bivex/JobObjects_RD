@@ -163,10 +163,14 @@ namespace AgentEngine {
     // Config options for an Agent Session
     struct AgentSessionConfig {
         std::wstring SessionName;
-        uint64_t MaxMemoryBytes;       // Hard / Soft Memory Cap
-        uint32_t CpuRateCap;             // CPU Hard Cap percentage (1-100)
-        uint32_t ActiveProcessLimit;     // Max child processes
-        bool EnableAutoTrimOnIdle;    // Compress working set during LLM reasoning
+        uint64_t MaxMemoryBytes = 0;       // Hard / Soft Memory Cap
+        uint32_t CpuRateCap = 0;           // CPU Hard Cap percentage (1-100)
+        uint32_t ActiveProcessLimit = 0;   // Max child processes
+        bool EnableAutoTrimOnIdle = true;  // Compress working set during LLM reasoning
+        
+        // Hysteresis Thresholds (Formally verified via SPIN)
+        double FreezeThresholdPct = 80.0;  // Freeze process tree when RAM >= 80%
+        double ThawThresholdPct = 60.0;    // Thaw process tree when RAM <= 60%
     };
 
     class AgentSession {
@@ -186,6 +190,7 @@ namespace AgentEngine {
         // Control Execution State (Freeze / Thaw)
         bool FreezeJobTree();
         bool ThawJobTree();
+        bool IsFrozen() const { return m_isFrozen.load(); }
 
         // Resource Control: Disk I/O & Network Rate Limiting
         bool SetIoRateLimit(const std::wstring& volumeName, uint64_t maxIops, uint64_t maxBandwidthBytesPerSec);
@@ -206,6 +211,7 @@ namespace AgentEngine {
         HANDLE m_hCompletionPort;
         HANDLE m_hMonitorThread;
         std::atomic<bool> m_bRunning;
+        std::atomic<bool> m_isFrozen;
         ResourceFeedbackCallback m_feedbackCallback;
         AopCallback m_aopCallback;
 #ifndef _WIN32

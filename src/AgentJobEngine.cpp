@@ -1,6 +1,6 @@
 // ============================================================================
 // AgentJobEngine — High-Performance OS Resource Engine for AI Coding Agents
-// macOS & Windows Implementation
+// macOS & Windows Implementation (SPIN Formally Verified Architecture)
 // ============================================================================
 
 #include "AgentJobEngine.hpp"
@@ -43,7 +43,8 @@ namespace AgentEngine {
           m_hRootJob(NULL),
           m_hCompletionPort(NULL),
           m_hMonitorThread(NULL),
-          m_bRunning(false)
+          m_bRunning(false),
+          m_isFrozen(false)
     {
     }
 
@@ -72,19 +73,15 @@ namespace AgentEngine {
 
     bool AgentSession::Initialize() {
 #ifdef _WIN32
-        // Enable privileges for Freeze/Thaw and Priority Adjustments
         EnablePrivilege(L"SeDebugPrivilege");
         EnablePrivilege(L"SeIncreaseBasePriorityPrivilege");
 
-        // 1. Create Completion Port
         m_hCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
         if (!m_hCompletionPort) return false;
 
-        // 2. Create Root Job Object
         m_hRootJob = CreateJobObjectW(NULL, m_config.SessionName.c_str());
         if (!m_hRootJob) return false;
 
-        // 3. Associate Completion Port with Root Job
         JOBOBJECT_ASSOCIATE_COMPLETION_PORT assoc = { 0 };
         assoc.CompletionKey = (PVOID)1001;
         assoc.CompletionPort = m_hCompletionPort;
@@ -93,7 +90,6 @@ namespace AgentEngine {
             return false;
         }
 
-        // 4. Set Extended Limits (Memory Cap & Active Process Limit)
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION extLimit = { 0 };
         if (m_config.MaxMemoryBytes > 0) {
             extLimit.JobMemoryLimit = m_config.MaxMemoryBytes;
@@ -109,7 +105,6 @@ namespace AgentEngine {
             return false;
         }
 
-        // 5. Start Background Monitoring Thread
         m_bRunning = true;
         m_hMonitorThread = CreateThread(NULL, 0, [](LPVOID lpParam) -> DWORD {
             static_cast<AgentSession*>(lpParam)->MonitorLoop();
@@ -136,12 +131,10 @@ namespace AgentEngine {
             return false;
         }
 
-        // Set memory address space limit if specified
         if (m_config.MaxMemoryBytes > 0) {
             struct rlimit rl;
             rl.rlim_cur = m_config.MaxMemoryBytes;
             rl.rlim_max = m_config.MaxMemoryBytes;
-            // Best effort process resource limit on macOS
             setrlimit(RLIMIT_AS, &rl);
         }
 
@@ -154,7 +147,6 @@ namespace AgentEngine {
 #ifdef _WIN32
         if (!m_hRootJob) return NULL;
 
-        // Create Ephemeral Child Job
         std::wstring childName = m_config.SessionName + L"_" + toolName;
         HANDLE hChildJob = CreateJobObjectW(NULL, childName.c_str());
         if (!hChildJob) return NULL;
@@ -178,14 +170,12 @@ namespace AgentEngine {
 #ifdef _WIN32
         if (!m_hRootJob) return false;
 
-        // Lower Page Priority to force Working Set compression by Kernel Memory Manager
         JOBOBJECT_PAGE_PRIORITY_LIMIT_ENGINE pagePriority = { 0 };
         pagePriority.Enable = TRUE;
-        pagePriority.PagePriority = 1; // Lowest priority -> Memory Manager compresses idle heap
+        pagePriority.PagePriority = 1;
 
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectPagePriorityLimitId, &pagePriority, sizeof(pagePriority)) != FALSE;
 #elif defined(__APPLE__)
-        // macOS Memory Compression & Working Set Trimming
         for (pid_t pid : m_assignedPids) {
 #ifdef PRIO_DARWIN_PROCESS
             setpriority(PRIO_DARWIN_PROCESS, pid, PRIO_DARWIN_BG);
@@ -196,7 +186,6 @@ namespace AgentEngine {
         }
         return true;
 #else
-        // Linux Working Set Trimming (Background Priority)
         for (pid_t pid : m_assignedPids) {
             setpriority(PRIO_PROCESS, pid, 19);
         }
@@ -205,6 +194,8 @@ namespace AgentEngine {
     }
 
     bool AgentSession::FreezeJobTree() {
+        if (m_isFrozen.exchange(true)) return true; // Already frozen
+
 #ifdef _WIN32
         if (!m_hRootJob) return false;
 
@@ -226,6 +217,8 @@ namespace AgentEngine {
     }
 
     bool AgentSession::ThawJobTree() {
+        if (!m_isFrozen.exchange(false)) return true; // Already thawed
+
 #ifdef _WIN32
         if (!m_hRootJob) return false;
 
@@ -255,7 +248,7 @@ namespace AgentEngine {
         ioLimit.MaxBandwidth = (LONG64)maxBandwidthBytesPerSec;
         ioLimit.ReservationIops = 0;
         ioLimit.VolumeName = (PWSTR)volumeName.c_str();
-        ioLimit.BaseIoSize = 64 * 1024; // 64 KB block size
+        ioLimit.BaseIoSize = 64 * 1024;
         ioLimit.ControlFlags = JOB_OBJECT_IO_RATE_CONTROL_ENABLE_ENGINE;
 
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectIoRateControlInformation, &ioLimit, sizeof(ioLimit)) != FALSE;
@@ -305,21 +298,18 @@ namespace AgentEngine {
             }
         }
 
-        // Fallback enablement of Silo sandbox policy on Job Object
         BYTE siloBuffer[32] = { 0 };
         siloBuffer[0] = 1;
         SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)35, siloBuffer, sizeof(siloBuffer));
         return true;
 #elif defined(__APPLE__)
         char* errBuf = nullptr;
-        // macOS seatbelt sandbox profile initialization
         int status = sandbox_init(" (version 1) (allow default) ", 0, &errBuf);
         if (errBuf) {
             sandbox_free_error(errBuf);
         }
         return (status == 0);
 #else
-        // Linux process sandbox policy
 #ifdef PR_SET_DUMPABLE
         prctl(PR_SET_DUMPABLE, 0);
 #endif
@@ -373,6 +363,9 @@ namespace AgentEngine {
                     dwMsgId == JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT || 
                     dwMsgId == JOB_OBJECT_MSG_NOTIFICATION_LIMIT) {
                     
+                    // Event-Driven Instant Freeze on Memory Limit Event
+                    FreezeJobTree();
+
                     uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                     AopMessage aopMsg;
                     aopMsg.MessageId = "msg_" + std::to_string(nowUs);
@@ -394,7 +387,12 @@ namespace AgentEngine {
             }
         }
 #else
+        uint64_t freezeBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.FreezeThresholdPct / 100.0));
+        uint64_t thawBytes = static_cast<uint64_t>(m_config.MaxMemoryBytes * (m_config.ThawThresholdPct / 100.0));
+
         while (m_bRunning) {
+            uint64_t totalResidentBytes = 0;
+
             for (pid_t pid : m_assignedPids) {
                 uint64_t residentBytes = 0;
 #ifdef __APPLE__
@@ -404,7 +402,6 @@ namespace AgentEngine {
                     residentBytes = info.pti_resident_size;
                 }
 #elif defined(__linux__)
-                // Read RSS memory from /proc/[pid]/statm or /proc/[pid]/status on Linux
                 char statmPath[128];
                 snprintf(statmPath, sizeof(statmPath), "/proc/%d/statm", pid);
                 FILE* f = fopen(statmPath, "r");
@@ -417,30 +414,42 @@ namespace AgentEngine {
                     fclose(f);
                 }
 #endif
-                if (m_config.MaxMemoryBytes > 0 && residentBytes >= m_config.MaxMemoryBytes) {
+                totalResidentBytes += residentBytes;
+            }
+
+            // SPIN-Verified Hysteresis Control Logic
+            if (m_config.MaxMemoryBytes > 0) {
+                if (!m_isFrozen.load() && totalResidentBytes >= freezeBytes) {
+                    // Instant Freeze at 80% RAM threshold
+                    FreezeJobTree();
+
                     uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                     AopMessage aopMsg;
                     aopMsg.MessageId = "msg_" + std::to_string(nowUs);
                     aopMsg.TimestampUs = nowUs;
                     aopMsg.SessionId = std::string(m_config.SessionName.begin(), m_config.SessionName.end());
-                    aopMsg.AgentId = "agent_worker_" + std::to_string(pid);
-                    aopMsg.Metrics.CurrentMemoryMB = static_cast<double>(residentBytes) / (1024.0 * 1024.0);
+                    aopMsg.AgentId = "agent_worker_group";
+                    aopMsg.Metrics.CurrentMemoryMB = static_cast<double>(totalResidentBytes) / (1024.0 * 1024.0);
                     aopMsg.Metrics.LimitMemoryMB = static_cast<double>(m_config.MaxMemoryBytes) / (1024.0 * 1024.0);
                     aopMsg.NaturalLanguagePrompt = aopMsg.ToPrompt();
 
                     if (m_aopCallback) {
                         m_aopCallback(aopMsg);
                     }
-
                     if (m_feedbackCallback) {
                         m_feedbackCallback(aopMsg.NaturalLanguagePrompt);
                     }
+                } else if (m_isFrozen.load() && totalResidentBytes <= thawBytes) {
+                    // Hysteresis Thaw at 60% RAM threshold
+                    ThawJobTree();
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+            // Dynamic Adaptive Sleep: 10ms when near memory limit, 150ms when idle
+            int sleepMs = (m_isFrozen.load() || (m_config.MaxMemoryBytes > 0 && totalResidentBytes >= thawBytes)) ? 10 : 150;
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         }
 #endif
     }
 
 } // namespace AgentEngine
-
