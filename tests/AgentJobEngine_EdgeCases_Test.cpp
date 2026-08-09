@@ -17,7 +17,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
+#endif
 #endif
 
 // Worker mode flags for edge case tests
@@ -49,7 +51,7 @@ void EdgeTestWorker(EdgeTestMode mode) {
         } else {
             printf("[EdgeWorker:Breakaway] Breakaway blocked by OS Job policy (Error: %lu).\n", GetLastError());
         }
-#else
+#elif defined(__APPLE__)
         uint32_t size = sizeof(szSelfPath);
         if (_NSGetExecutablePath(szSelfPath, &size) != 0) {
             strncpy(szSelfPath, "test", MAX_PATH);
@@ -57,6 +59,23 @@ void EdgeTestWorker(EdgeTestMode mode) {
         pid_t pid = fork();
         if (pid == 0) {
             setpgid(0, 0); // New process group
+            printf("[EdgeWorker:Breakaway] Isolated breakaway child running (PID: %d).\n", getpid());
+            exit(0);
+        } else if (pid > 0) {
+            int status = 0;
+            waitpid(pid, &status, 0);
+            printf("[EdgeWorker:Breakaway] Breakaway child executed safely.\n");
+        }
+#else
+        ssize_t len = readlink("/proc/self/exe", szSelfPath, sizeof(szSelfPath) - 1);
+        if (len != -1) {
+            szSelfPath[len] = '\0';
+        } else {
+            strncpy(szSelfPath, "test", MAX_PATH);
+        }
+        pid_t pid = fork();
+        if (pid == 0) {
+            setpgid(0, 0);
             printf("[EdgeWorker:Breakaway] Isolated breakaway child running (PID: %d).\n", getpid());
             exit(0);
         } else if (pid > 0) {

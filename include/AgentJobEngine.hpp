@@ -22,7 +22,6 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/resource.h>
-#include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
 #include <signal.h>
@@ -31,6 +30,7 @@
 #include <fcntl.h>
 
 #ifdef __APPLE__
+#include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/task.h>
 #include <sandbox.h>

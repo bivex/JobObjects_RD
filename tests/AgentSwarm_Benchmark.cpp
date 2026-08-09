@@ -18,9 +18,11 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <mach-o/dyld.h>
 #include <libproc.h>
+#endif
 #endif
 
 #define TARGET_SWARM_COUNT 50
@@ -75,12 +77,27 @@ static uint64_t GetProcessWorkingSetMB(HANDLE hProcess) {
         return pmc.WorkingSetSize / (1024 * 1024);
     }
     return 0;
-#else
+#elif defined(__APPLE__)
     pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(hProcess));
     struct proc_taskinfo info;
     int st = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info));
     if (st == sizeof(info)) {
         return info.pti_resident_size / (1024 * 1024);
+    }
+    return 0;
+#else
+    pid_t pid = static_cast<pid_t>(reinterpret_cast<intptr_t>(hProcess));
+    char statmPath[128];
+    snprintf(statmPath, sizeof(statmPath), "/proc/%d/statm", pid);
+    FILE* f = fopen(statmPath, "r");
+    if (f) {
+        long sizePages = 0, rssPages = 0;
+        if (fscanf(f, "%ld %ld", &sizePages, &rssPages) == 2) {
+            long pageSize = sysconf(_SC_PAGESIZE);
+            fclose(f);
+            return (static_cast<uint64_t>(rssPages) * (pageSize > 0 ? pageSize : 4096)) / (1024 * 1024);
+        }
+        fclose(f);
     }
     return 0;
 #endif
@@ -97,15 +114,22 @@ int main(int argc, char* argv[]) {
     printf("================================================================\n\n");
 
     uint64_t initialMemoryMB = GetSystemAvailableMemoryMB();
-    printf("[*] Baseline System RAM: %llu MB\n", initialMemoryMB);
+    printf("[*] Baseline System RAM: %llu MB\n", (unsigned long long)initialMemoryMB);
     printf("[*] Spawning Swarm Benchmark of %d Agent Sessions...\n\n", TARGET_SWARM_COUNT);
 
     char szSelfPath[MAX_PATH];
 #ifdef _WIN32
     GetModuleFileNameA(NULL, szSelfPath, MAX_PATH);
-#else
+#elif defined(__APPLE__)
     uint32_t size = sizeof(szSelfPath);
     if (_NSGetExecutablePath(szSelfPath, &size) != 0) {
+        strncpy(szSelfPath, argv[0], MAX_PATH);
+    }
+#else
+    ssize_t len = readlink("/proc/self/exe", szSelfPath, sizeof(szSelfPath) - 1);
+    if (len != -1) {
+        szSelfPath[len] = '\0';
+    } else {
         strncpy(szSelfPath, argv[0], MAX_PATH);
     }
 #endif
@@ -190,7 +214,7 @@ int main(int argc, char* argv[]) {
     }
     double avgUncompressedMB = (double)totalUncompressedWorkingSetMB / nSuccessCount;
     printf("[*] Active Framework Working Set (Uncompressed): Total = %llu MB | Avg = %.1f MB/agent\n",
-           totalUncompressedWorkingSetMB, avgUncompressedMB);
+           (unsigned long long)totalUncompressedWorkingSetMB, avgUncompressedMB);
 
     // Apply Memory Compression (Simulating Idle LLM Reasoning Phase)
     printf("\n[*] Simulating LLM Reasoning Phase: Compressing Working Sets via TrimWorkingSetToCompressStore()...\n");
@@ -207,7 +231,7 @@ int main(int argc, char* argv[]) {
     }
     double avgCompressedMB = (double)totalCompressedWorkingSetMB / nSuccessCount;
     printf("[+] Compressed Working Set: Total = %llu MB | Avg = %.1f MB/agent\n",
-           totalCompressedWorkingSetMB, avgCompressedMB);
+           (unsigned long long)totalCompressedWorkingSetMB, avgCompressedMB);
 
     double compressionRatio = (avgUncompressedMB > 0) ? (avgUncompressedMB / (avgCompressedMB > 0 ? avgCompressedMB : 1.0)) : 1.0;
     printf("[+] Measured Memory Compression Factor: %.2fx Reduction\n", compressionRatio);
@@ -226,9 +250,9 @@ int main(int argc, char* argv[]) {
     printf("  Memory Compression Gain   : %.2fx\n", compressionRatio);
     printf("----------------------------------------------------------------\n");
     printf("  Projected Density on 128 GB Server:\n");
-    printf("    * Standard Docker / Unmanaged : ~%llu Agents\n", maxDensityUnconstrained);
+    printf("    * Standard Docker / Unmanaged : ~%llu Agents\n", (unsigned long long)maxDensityUnconstrained);
     printf("    * AgentJobEngine Managed     : ~%llu Agents (%.1fx Swarm Capacity!)\n",
-           maxDensityManaged, (double)maxDensityManaged / (maxDensityUnconstrained > 0 ? maxDensityUnconstrained : 1));
+           (unsigned long long)maxDensityManaged, (double)maxDensityManaged / (maxDensityUnconstrained > 0 ? maxDensityUnconstrained : 1));
     printf("================================================================\n");
 
     // Clean up swarm

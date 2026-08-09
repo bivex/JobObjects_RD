@@ -184,7 +184,7 @@ namespace AgentEngine {
         pagePriority.PagePriority = 1; // Lowest priority -> Memory Manager compresses idle heap
 
         return SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)JobObjectPagePriorityLimitId, &pagePriority, sizeof(pagePriority)) != FALSE;
-#else
+#elif defined(__APPLE__)
         // macOS Memory Compression & Working Set Trimming
         for (pid_t pid : m_assignedPids) {
 #ifdef PRIO_DARWIN_PROCESS
@@ -193,6 +193,12 @@ namespace AgentEngine {
 #ifdef IOPOL_TYPE_DISK
             setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_THROTTLE);
 #endif
+        }
+        return true;
+#else
+        // Linux Working Set Trimming (Background Priority)
+        for (pid_t pid : m_assignedPids) {
+            setpriority(PRIO_PROCESS, pid, 19);
         }
         return true;
 #endif
@@ -304,7 +310,7 @@ namespace AgentEngine {
         siloBuffer[0] = 1;
         SetInformationJobObject(m_hRootJob, (JOBOBJECTINFOCLASS)35, siloBuffer, sizeof(siloBuffer));
         return true;
-#else
+#elif defined(__APPLE__)
         char* errBuf = nullptr;
         // macOS seatbelt sandbox profile initialization
         int status = sandbox_init(" (version 1) (allow default) ", 0, &errBuf);
@@ -312,6 +318,12 @@ namespace AgentEngine {
             sandbox_free_error(errBuf);
         }
         return (status == 0);
+#else
+        // Linux process sandbox policy
+#ifdef PR_SET_DUMPABLE
+        prctl(PR_SET_DUMPABLE, 0);
+#endif
+        return true;
 #endif
     }
 

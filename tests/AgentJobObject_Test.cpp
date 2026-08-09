@@ -15,7 +15,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
 #include <mach-o/dyld.h>
+#endif
 #endif
 
 #define NOTIFICATION_LIMIT_BYTES (50 * 1024 * 1024)  // 50 MB Cap
