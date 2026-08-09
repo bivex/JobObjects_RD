@@ -109,13 +109,19 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    int targetSwarmCount = 50;
+    if (argc > 1 && argv[1][0] != '-') {
+        targetSwarmCount = atoi(argv[1]);
+        if (targetSwarmCount <= 0) targetSwarmCount = 50;
+    }
+
     printf("================================================================\n");
     printf(" AgentJobEngine -- Agent Swarm Concurrency & Density Benchmark\n");
     printf("================================================================\n\n");
 
     uint64_t initialMemoryMB = GetSystemAvailableMemoryMB();
     printf("[*] Baseline System RAM: %llu MB\n", (unsigned long long)initialMemoryMB);
-    printf("[*] Spawning Swarm Benchmark of %d Agent Sessions...\n\n", TARGET_SWARM_COUNT);
+    printf("[*] Spawning Swarm Benchmark of %d Agent Sessions...\n\n", targetSwarmCount);
 
     char szSelfPath[MAX_PATH];
 #ifdef _WIN32
@@ -144,12 +150,12 @@ int main(int argc, char* argv[]) {
     };
 
     std::vector<SwarmNode> swarm;
-    swarm.reserve(TARGET_SWARM_COUNT);
+    swarm.reserve(targetSwarmCount);
 
     auto startClock = std::chrono::high_resolution_clock::now();
 
     int nSuccessCount = 0;
-    for (int i = 0; i < TARGET_SWARM_COUNT; i++) {
+    for (int i = 0; i < targetSwarmCount; i++) {
         AgentEngine::AgentSessionConfig config;
         config.SessionName = L"SwarmAgent_" + std::to_wstring(i);
         config.MaxMemoryBytes = 100 * 1024 * 1024;
@@ -203,7 +209,7 @@ int main(int argc, char* argv[]) {
     double spawnDurationMs = std::chrono::duration<double, std::milli>(endClock - startClock).count();
 
     printf("[+] Successfully spawned & bound %d / %d Agent Sessions in %.2f ms (%.2f ms/agent).\n",
-           nSuccessCount, TARGET_SWARM_COUNT, spawnDurationMs, spawnDurationMs / nSuccessCount);
+           nSuccessCount, targetSwarmCount, spawnDurationMs, spawnDurationMs / nSuccessCount);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1500)); // Allow heap commit
 
