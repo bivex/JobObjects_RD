@@ -130,8 +130,35 @@ typedef struct _JOBOBJECT_NET_RATE_CONTROL_INFORMATION_ENGINE {
 
 namespace AgentEngine {
 
-    // Callback type for receiving Intent-Driven Natural Language Feedback
+    // AOP v1.0 Protocol Structs
+    struct AopMetrics {
+        double CurrentMemoryMB = 0.0;
+        double LimitMemoryMB = 0.0;
+        double CpuUsagePct = 0.0;
+        uint64_t IopsCurrent = 0;
+        uint64_t IopsLimit = 0;
+    };
+
+    struct AopMessage {
+        std::string AopVersion = "1.0";
+        std::string MessageId;
+        uint64_t TimestampUs = 0;
+        std::string SessionId;
+        std::string AgentId;
+        std::string Type = "RESOURCE_ALERT";
+        std::string Severity = "WARNING";
+        std::string EventCode = "MEMORY_CAP_EXCEEDED";
+        AopMetrics Metrics;
+        std::string SuggestedAction = "REDUCE_THREAD_COUNT";
+        std::string NaturalLanguagePrompt;
+
+        std::string ToJson() const;
+        std::string ToPrompt() const;
+    };
+
+    // Callback type for receiving Intent-Driven Natural Language Feedback & AOP Messages
     using ResourceFeedbackCallback = std::function<void(const std::string& feedbackMsg)>;
+    using AopCallback = std::function<void(const AopMessage& msg)>;
 
     // Config options for an Agent Session
     struct AgentSessionConfig {
@@ -164,11 +191,12 @@ namespace AgentEngine {
         bool SetIoRateLimit(const std::wstring& volumeName, uint64_t maxIops, uint64_t maxBandwidthBytesPerSec);
         bool SetNetworkRateLimit(uint64_t maxBandwidthBytesPerSec);
 
-        // Container Sandbox: Server Silos / macOS Sandbox
+        // Container Sandbox: Server Silos / macOS Sandbox / Linux Namespaces
         bool CreateSiloSandbox();
 
-        // Register Feedback Handler
+        // Register Feedback Handler & AOP Callback
         void SetFeedbackCallback(ResourceFeedbackCallback callback) { m_feedbackCallback = callback; }
+        void SetAopCallback(AopCallback callback) { m_aopCallback = callback; }
 
     private:
         void MonitorLoop();
@@ -179,6 +207,7 @@ namespace AgentEngine {
         HANDLE m_hMonitorThread;
         std::atomic<bool> m_bRunning;
         ResourceFeedbackCallback m_feedbackCallback;
+        AopCallback m_aopCallback;
 #ifndef _WIN32
         std::vector<pid_t> m_assignedPids;
         std::thread m_posixMonitorThread;

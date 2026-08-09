@@ -93,9 +93,12 @@ int main(int argc, char* argv[]) {
     AgentEngine::AgentSession agentSession(config);
 
     // 3. Register Intent-Driven Natural-Language Feedback Callback for LLM
+    agentSession.SetAopCallback([](const AgentEngine::AopMessage& msg) {
+        printf("\n  [>>> AOP v1.0 PROTOCOL JSON TELEMETRY <<<]\n%s\n", msg.ToJson().c_str());
+    });
+
     agentSession.SetFeedbackCallback([](const std::string& feedbackMsg) {
-        printf("\n  [>>> INTENT-DRIVEN FEEDBACK TO LLM MANAGER <<<]\n");
-        printf("  %s\n\n", feedbackMsg.c_str());
+        printf("\n  [>>> INTENT-DRIVEN FEEDBACK TO LLM MANAGER <<<]\n  %s\n\n", feedbackMsg.c_str());
     });
 
     if (!agentSession.Initialize()) {

@@ -327,6 +327,38 @@ namespace AgentEngine {
 #endif
     }
 
+    std::string AopMessage::ToJson() const {
+        return "{\n"
+               "  \"aop_version\": \"" + AopVersion + "\",\n"
+               "  \"message_id\": \"" + MessageId + "\",\n"
+               "  \"timestamp_us\": " + std::to_string(TimestampUs) + ",\n"
+               "  \"session_id\": \"" + SessionId + "\",\n"
+               "  \"agent_id\": \"" + AgentId + "\",\n"
+               "  \"type\": \"" + Type + "\",\n"
+               "  \"severity\": \"" + Severity + "\",\n"
+               "  \"payload\": {\n"
+               "    \"event_code\": \"" + EventCode + "\",\n"
+               "    \"metrics\": {\n"
+               "      \"current_memory_mb\": " + std::to_string(Metrics.CurrentMemoryMB) + ",\n"
+               "      \"limit_memory_mb\": " + std::to_string(Metrics.LimitMemoryMB) + ",\n"
+               "      \"cpu_usage_pct\": " + std::to_string(Metrics.CpuUsagePct) + ",\n"
+               "      \"iops_current\": " + std::to_string(Metrics.IopsCurrent) + ",\n"
+               "      \"iops_limit\": " + std::to_string(Metrics.IopsLimit) + "\n"
+               "    },\n"
+               "    \"suggested_action\": \"" + SuggestedAction + "\"\n"
+               "  },\n"
+               "  \"natural_language_prompt\": \"" + NaturalLanguagePrompt + "\"\n"
+               "}";
+    }
+
+    std::string AopMessage::ToPrompt() const {
+        return "[OS RESOURCE ALERT]\n"
+               "  Event: " + EventCode + "\n"
+               "  Session: " + SessionId + "\n"
+               "  Current Usage: " + std::to_string(Metrics.CurrentMemoryMB) + " MB / " + std::to_string(Metrics.LimitMemoryMB) + " MB\n"
+               "  Recommended Action: " + SuggestedAction;
+    }
+
     void AgentSession::MonitorLoop() {
 #ifdef _WIN32
         DWORD dwMsgId = 0;
@@ -341,13 +373,22 @@ namespace AgentEngine {
                     dwMsgId == JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT || 
                     dwMsgId == JOB_OBJECT_MSG_NOTIFICATION_LIMIT) {
                     
-                    std::string feedback = 
-                        "[OS RESOURCE ALERT]: Memory cap reached (" + 
-                        std::to_string(m_config.MaxMemoryBytes / (1024 * 1024)) + 
-                        " MB). Reduce tool allocation or execution threads.";
+                    uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    AopMessage aopMsg;
+                    aopMsg.MessageId = "msg_" + std::to_string(nowUs);
+                    aopMsg.TimestampUs = nowUs;
+                    aopMsg.SessionId = std::string(m_config.SessionName.begin(), m_config.SessionName.end());
+                    aopMsg.AgentId = "agent_worker_root";
+                    aopMsg.Metrics.CurrentMemoryMB = static_cast<double>(m_config.MaxMemoryBytes) / (1024.0 * 1024.0);
+                    aopMsg.Metrics.LimitMemoryMB = static_cast<double>(m_config.MaxMemoryBytes) / (1024.0 * 1024.0);
+                    aopMsg.NaturalLanguagePrompt = aopMsg.ToPrompt();
+
+                    if (m_aopCallback) {
+                        m_aopCallback(aopMsg);
+                    }
 
                     if (m_feedbackCallback) {
-                        m_feedbackCallback(feedback);
+                        m_feedbackCallback(aopMsg.NaturalLanguagePrompt);
                     }
                 }
             }
@@ -377,13 +418,22 @@ namespace AgentEngine {
                 }
 #endif
                 if (m_config.MaxMemoryBytes > 0 && residentBytes >= m_config.MaxMemoryBytes) {
-                    std::string feedback = 
-                        "[OS RESOURCE ALERT]: Memory cap reached (" + 
-                        std::to_string(m_config.MaxMemoryBytes / (1024 * 1024)) + 
-                        " MB). Reduce tool allocation or execution threads.";
+                    uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    AopMessage aopMsg;
+                    aopMsg.MessageId = "msg_" + std::to_string(nowUs);
+                    aopMsg.TimestampUs = nowUs;
+                    aopMsg.SessionId = std::string(m_config.SessionName.begin(), m_config.SessionName.end());
+                    aopMsg.AgentId = "agent_worker_" + std::to_string(pid);
+                    aopMsg.Metrics.CurrentMemoryMB = static_cast<double>(residentBytes) / (1024.0 * 1024.0);
+                    aopMsg.Metrics.LimitMemoryMB = static_cast<double>(m_config.MaxMemoryBytes) / (1024.0 * 1024.0);
+                    aopMsg.NaturalLanguagePrompt = aopMsg.ToPrompt();
+
+                    if (m_aopCallback) {
+                        m_aopCallback(aopMsg);
+                    }
 
                     if (m_feedbackCallback) {
-                        m_feedbackCallback(feedback);
+                        m_feedbackCallback(aopMsg.NaturalLanguagePrompt);
                     }
                 }
             }
