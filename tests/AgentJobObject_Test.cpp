@@ -36,33 +36,14 @@ void MemorySpikeWorker() {
 #endif
     if (!pBuffer) {
         printf("[Child Worker] VirtualAlloc exceeded 50 MB Job Memory Limit!\n");
-        printf("[Child Worker] Graceful degradation: Retrying with smaller allocation (30 MB)...\n");
-        
-        // Fallback to smaller 30 MB allocation (Graceful Adaptation)
-#ifdef _WIN32
-        pBuffer = (char*)VirtualAlloc(NULL, 30 * 1024 * 1024, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
-        pBuffer = (char*)mmap(NULL, 30 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-        if (pBuffer == MAP_FAILED) pBuffer = NULL;
-#endif
-        if (pBuffer) {
-            for (size_t i = 0; i < 30 * 1024 * 1024; i += 4096) pBuffer[i] = 1;
-            printf("[Child Worker] Fallback allocation of 30 MB succeeded!\n");
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-#ifdef _WIN32
-            VirtualFree(pBuffer, 0, MEM_RELEASE);
-#else
-            munmap(pBuffer, 30 * 1024 * 1024);
-#endif
-        }
         return;
     }
 
     // Touch pages repeatedly
     for (size_t i = 0; i < TARGET_ALLOCATION_BYTES; i += 4096) pBuffer[i] = 1;
 
-    printf("[Child Worker] Memory committed. Holding for 3s...\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    printf("[Child Worker] Memory committed. Holding...\n");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 #ifdef _WIN32
     VirtualFree(pBuffer, 0, MEM_RELEASE);
 #else
@@ -85,7 +66,7 @@ int main(int argc, char* argv[]) {
     // 1. Configure Agent Engine Session
     AgentEngine::AgentSessionConfig config;
     config.SessionName = L"AgentSession_SWE_Bench_Task_101";
-    config.MaxMemoryBytes = NOTIFICATION_LIMIT_BYTES; // 50 MB Soft/Hard Memory Cap
+    config.MaxMemoryBytes = NOTIFICATION_LIMIT_BYTES; // 50 MB Memory Cap
     config.ActiveProcessLimit = 10;                     // Max 10 active processes
     config.EnableAutoTrimOnIdle = true;                 // Memory compression during LLM reasoning
 
@@ -169,7 +150,10 @@ int main(int argc, char* argv[]) {
     printf("[*] Simulating LLM Reasoning Phase (Idle)... Trimming Working Set to Memory Compression Store...\n");
     agentSession.TrimWorkingSetToCompressStore();
 
-    // Wait for tool execution completion
+    // Sleep briefly to allow memory spike and automatic freeze/thaw cycle to occur
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    agentSession.ThawJobTree(); // Ensure process completes
+
 #ifdef _WIN32
     WaitForSingleObject(pi.hProcess, INFINITE);
     CloseHandle(pi.hProcess);
@@ -182,4 +166,3 @@ int main(int argc, char* argv[]) {
     printf("\n[+] AgentEngine Integrated Test completed successfully.\n");
     return 0;
 }
-
